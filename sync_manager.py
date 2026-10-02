@@ -39,6 +39,7 @@ class Subscription:
     kb_id: str
     kb_name: str
     target_kb: str = ""
+    platform: str = "ima"  # 来源平台：ima / obsidian / github / ...
     enabled: bool = True
     last_sync_at: str = ""
     last_status: str = "pending"  # pending | ok | partial | error
@@ -51,6 +52,7 @@ class Subscription:
             "kb_id": self.kb_id,
             "kb_name": self.kb_name,
             "target_kb": self.target_kb,
+            "platform": self.platform,
             "enabled": self.enabled,
             "last_sync_at": self.last_sync_at,
             "last_status": self.last_status,
@@ -165,15 +167,15 @@ class SyncManager:
     # ---------- 订阅管理 ----------
 
     async def add_subscription(
-        self, kb_id: str, kb_name: str = "", target_kb: str = ""
+        self, kb_id: str, kb_name: str = "", target_kb: str = "", platform: str = "ima"
     ) -> Subscription:
         subs = await self.get_subs()
         if any(s.kb_id == kb_id for s in subs):
             raise ValueError(f"知识库 {kb_id} 已在订阅列表中")
-        sub = Subscription(kb_id=kb_id, kb_name=kb_name, target_kb=target_kb)
+        sub = Subscription(kb_id=kb_id, kb_name=kb_name, target_kb=target_kb, platform=platform)
         subs.append(sub)
         await self._save_subs(subs)
-        self.logger.info(f"[KBridge] 添加订阅: {kb_name} ({kb_id}) -> {target_kb or '自动创建'}")
+        self.logger.info(f"[KBridge] 添加订阅: {kb_name} ({kb_id}) -> {target_kb or '自动创建'} [{platform}]")
         return sub
 
     async def remove_subscription(self, index: int) -> Subscription:
@@ -197,14 +199,44 @@ class SyncManager:
             return kb, name
         if not self.config.get("auto_create_kb", True):
             raise ValueError(f"目标知识库 {name} 不存在，且未开启自动创建")
-        eps = self.context.get_all_embedding_providers()
-        if not eps:
-            raise ValueError("未配置任何嵌入（Embedding）模型，无法自动创建知识库")
-        await kb_mgr.create_kb(name, embedding_provider_id=eps[0].provider_config.get("id") or "default", emoji="📥")
+        embedding_provider_id = await self._pick_embedding_provider_id()
+        await kb_mgr.create_kb(
+            name, embedding_provider_id=embedding_provider_id, emoji="📥"
+        )
         kb = await kb_mgr.get_kb_by_name(name)
         if kb is None:
             raise ValueError(f"创建知识库失败: {name}")
         return kb, name
+
+    async def _pick_embedding_provider_id(self) -> str:
+        """返回通过 ProviderManager 校验、确实可用的 Embedding Provider id。
+
+        get_all_embedding_providers() 返回的实例列表可能包含已失效的残留实例
+        （reload/terminate 后 embedding_provider_insts 未清理），不能直接取
+        第一个的 config id；必须经 inst_map（get_provider_by_id）逐一验证。
+        """
+        eps = self.context.get_all_embedding_providers()
+        if not eps:
+            raise ValueError(
+                "未配置任何嵌入（Embedding）模型，无法自动创建知识库："
+                "请先在 AstrBot「平台设置」中启用并配置嵌入模型（如 OpenAI Embedding）"
+            )
+        prov_mgr = getattr(self.context, "provider_manager", None)
+        for p in eps:
+            cfg = p.provider_config if isinstance(p.provider_config, dict) else {}
+            pid = cfg.get("id")
+            if not pid:
+                continue
+            try:
+                got = await prov_mgr.get_provider_by_id(pid) if prov_mgr else None
+            except Exception:  # noqa: BLE001
+                got = None
+            if got is not None:
+                return pid
+        raise ValueError(
+            "没有可用的 Embedding Provider：请先在 AstrBot「平台设置」中启用并配置"
+            "嵌入模型（如 OpenAI Embedding），或检查 Provider 是否已生效"
+        )
 
     async def _flush_sub(self, sub: Subscription) -> None:
         """把 sub 的最新状态写回订阅列表并落库。"""

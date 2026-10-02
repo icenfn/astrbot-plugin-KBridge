@@ -235,10 +235,30 @@ function renderSubs() {
   groups.forEach((items, g) => {
     const label = g === "ima" ? "腾讯 ima" : g;
     sel += `<optgroup label="${label}">${items
-      .map((k) => `<option value="${k.id}" data-name="${kbName(k)}">${kbName(k)}</option>`)
+      .map((k) => `<option value="${k.id}" data-name="${kbName(k)}" data-platform="${g}">${kbName(k)}</option>`)
       .join("")}</optgroup>`;
   });
   if (!sel) sel = '<option value="">加载 IMA 知识库…</option>';
+  // 订阅列表按平台分组
+  const subGroups = new Map();
+  subs.forEach((s) => {
+    const g = s.platform || "ima";
+    if (!subGroups.has(g)) subGroups.set(g, []);
+    subGroups.get(g).push(s);
+  });
+  let subListHtml = "";
+  if (subs.length) {
+    subGroups.forEach((items, g) => {
+      const label = g === "ima" ? "腾讯 ima" : g;
+      subListHtml += `
+        <div class="sub-group">
+          <div class="sub-group-title">${label}<span class="dim"> · ${items.length}</span></div>
+          <div class="sub-list">${items.map((s, i) => subCard(s, subs.indexOf(s))).join("")}</div>
+        </div>`;
+    });
+  } else {
+    subListHtml = `<div class="empty-state">暂无订阅 · 从上方选择 IMA 知识库添加</div>`;
+  }
   root.innerHTML = `
     <div class="add-panel">
       <div class="add-row">
@@ -249,11 +269,7 @@ function renderSubs() {
         <button class="btn primary" data-action="add-sub">${ICONS.plus}添加</button>
       </div>
     </div>
-    <div class="sub-list">
-      ${subs.length
-        ? subs.map((s, i) => subCard(s, i)).join("")
-        : `<div class="empty-state">暂无订阅 · 从上方选择 IMA 知识库添加</div>`}
-    </div>`;
+    ${subListHtml}`;
 
   const addBtn = root.querySelector("[data-action=add-sub]");
   addBtn.onclick = async () => {
@@ -263,11 +279,14 @@ function renderSubs() {
       toast("请先选择 IMA 知识库", false);
       return;
     }
-    const kbName = kbSel.selectedOptions[0]?.dataset?.name || "";
+    const opt = kbSel.selectedOptions[0];
+    const kbName = opt?.dataset?.name || "";
+    const platform = opt?.dataset?.platform || "ima";
     try {
       const r = await bridge.apiPost("subs/add", {
         kb_id: kbId,
         kb_name: kbName,
+        platform,
         target_kb: $("sub-target").value.trim(),
       });
       toast(`已添加订阅：${r.sub.kb_name}`);
@@ -296,15 +315,15 @@ function subCard(s, i) {
   return `
     <div class="sub-card">
       <div class="sub-main">
-        <div class="sub-name">${s.kb_name || s.kb_id}</div>
-        <div class="sub-id">${s.kb_id}</div>
-        <div class="sub-meta">
+        <div class="sub-line1">
+          <span class="sub-name">${s.kb_name || s.kb_id}</span>
           <span class="badge ${statusCls}" title="${s.last_error || ""}">${statusText}</span>
-          <span>→ ${s.target_kb || "自动创建"}</span>
         </div>
-        <div class="sub-meta dim">
-          <span>已同步 <b>${s.synced_count}</b></span>
-          <span>上次 ${s.last_sync_at || "—"}</span>
+        <div class="sub-line2">
+          <span class="dim" title="${s.kb_id}">${s.kb_id}</span>
+          <span>→ ${s.target_kb || "自动创建"}</span>
+          <span class="dim">已同步 ${s.synced_count}</span>
+          <span class="dim">${s.last_sync_at ? `上次 ${s.last_sync_at}` : ""}</span>
         </div>
       </div>
       <div class="sub-ops">

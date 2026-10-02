@@ -271,27 +271,42 @@ svg { width: 18px; height: 18px; flex: none; }
 }
 .add-row { display: flex; gap: 10px; flex-wrap: wrap; }
 
-.sub-list { display: flex; flex-direction: column; gap: 12px; }
+.sub-list { display: flex; flex-direction: column; gap: 8px; }
+.sub-group { margin-bottom: 14px; }
+.sub-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dim);
+  padding: 2px 2px 8px;
+}
 .sub-card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px 18px;
+  border-radius: 12px;
+  padding: 11px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 12px;
   box-shadow: var(--shadow);
 }
-.sub-name { font-weight: 600; font-size: 15px; }
-.sub-id { color: var(--dim); font-size: 11px; word-break: break-all; margin-top: 1px; }
-.sub-meta { display: flex; align-items: center; gap: 12px; margin-top: 6px; font-size: 13px; flex-wrap: wrap; }
-.sub-meta b { font-weight: 600; }
-.sub-ops { display: flex; gap: 8px; flex: none; }
+.sub-name { font-weight: 600; font-size: 14px; }
+.sub-line1 { display: flex; align-items: center; gap: 8px; }
+.sub-line2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text);
+  margin-top: 3px;
+  flex-wrap: wrap;
+}
+.sub-line2 .dim { color: var(--dim); }
+.sub-ops { display: flex; gap: 6px; flex: none; }
 .empty-state {
   text-align: center;
   color: var(--dim);
-  padding: 44px 0;
+  padding: 36px 0;
   background: var(--panel);
   border: 1px dashed var(--border);
   border-radius: var(--radius);

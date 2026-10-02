@@ -218,6 +218,7 @@ class KBridge(Star):
             kb_id=matched["id"],
             kb_name=matched.get("name", matched["id"]),
             target_kb=target_kb,
+            platform=str(payload.get("platform") or "ima"),
         )
         return json_response({"added": True, "sub": sub.to_dict()})
 
