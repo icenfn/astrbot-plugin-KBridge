@@ -57,6 +57,14 @@
 - 依赖 AstrBot 已配置 Embedding 模型方可自动建库
 - IMA 接口为个人账号授权，受频控限制（约 20 次/秒），并发默认 3
 
+## TODO：待支持的知识库平台
+
+- [x] **ima** — 已支持（订阅同步 + 管理页面）
+- [ ] **Obsidian** — 本地 vault 导入/监听同步
+- [ ] **GitHub Repository** — 仓库文件（含 README/文档目录）订阅同步
+- [ ] **Open Notebook** — NotebookLM 开放笔记本导入
+- [ ] **url2kb** — URL 批量转知识库（网页链接直接入库）
+
 ## 开发
 
 ```
