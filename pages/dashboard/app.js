@@ -80,12 +80,24 @@ function renderOverview() {
     root.textContent = "";
     return;
   }
-  const imaOk = stats.ima_configured;
+  // 平台配置统计：已配置 x / 支持总数
+  let supported = 0;
+  let configured = 0;
+  Object.entries(platformConfig?.platforms || {}).forEach(([id, p]) => {
+    if (!p.supported) return;
+    supported += 1;
+    const isSet =
+      id === "ima" &&
+      platformConfig.values["ima_client_id"] &&
+      platformConfig.values["ima_api_key"];
+    if (isSet) configured += 1;
+  });
+  const platOk = supported > 0 && configured === supported;
   const cards = [
     {
-      label: "IMA 连接",
-      value: imaOk ? "已配置" : "未配置",
-      cls: imaOk ? "good" : "warn",
+      label: "平台配置",
+      value: `已配置 ${configured}/${supported}`,
+      cls: platOk ? "good" : "warn",
       icon: ICONS.link,
     },
     { label: "订阅数", value: stats.sub_count, cls: "", icon: ICONS.book },
@@ -98,7 +110,6 @@ function renderOverview() {
     },
   ];
   root.innerHTML = `
-    <p class="lead">外部知识源订阅同步 · 连接 IMA 知识库，自动增量入 AstrBot</p>
     <div class="stat-grid">
       ${cards.map((c) => `
         <div class="stat-card">
@@ -114,7 +125,7 @@ function renderOverview() {
       <button class="btn" data-action="goto-platforms">${ICONS.link}去配置平台</button>
       <button class="btn" data-action="goto-subs">${ICONS.book}管理订阅</button>
     </div>
-    ${!imaOk ? `<div class="notice warn">IMA 未配置：请到「平台配置」填写 Client ID / API Key</div>` : ""}`;
+    ${!stats.ima_configured ? `<div class="notice warn">IMA 未配置：请到「平台配置」填写 Client ID / API Key</div>` : ""}`;
   bindQuickActions();
 }
 
@@ -213,7 +224,21 @@ function renderSubs() {
     return;
   }
   const kbName = (k) => k.name || k.kb_name || k.title || k.id || "未命名";
-  const sel = kbsCache.map((k) => `<option value="${k.id}">${kbName(k)}</option>`).join("");
+  // 按平台分组渲染 select（optgroup）
+  const groups = new Map();
+  kbsCache.forEach((k) => {
+    const g = k.platform || "ima";
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(k);
+  });
+  let sel = "";
+  groups.forEach((items, g) => {
+    const label = g === "ima" ? "腾讯 ima" : g;
+    sel += `<optgroup label="${label}">${items
+      .map((k) => `<option value="${k.id}" data-name="${kbName(k)}">${kbName(k)}</option>`)
+      .join("")}</optgroup>`;
+  });
+  if (!sel) sel = '<option value="">加载 IMA 知识库…</option>';
   root.innerHTML = `
     <div class="add-panel">
       <div class="add-row">
@@ -232,13 +257,19 @@ function renderSubs() {
 
   const addBtn = root.querySelector("[data-action=add-sub]");
   addBtn.onclick = async () => {
-    const kbId = $("sub-kb").value;
+    const kbSel = $("sub-kb");
+    const kbId = kbSel.value;
     if (!kbId) {
       toast("请先选择 IMA 知识库", false);
       return;
     }
+    const kbName = kbSel.selectedOptions[0]?.dataset?.name || "";
     try {
-      const r = await bridge.apiPost("subs/add", { kb_id: kbId, target_kb: $("sub-target").value.trim() });
+      const r = await bridge.apiPost("subs/add", {
+        kb_id: kbId,
+        kb_name: kbName,
+        target_kb: $("sub-target").value.trim(),
+      });
       toast(`已添加订阅：${r.sub.kb_name}`);
       $("sub-target").value = "";
       await refresh();

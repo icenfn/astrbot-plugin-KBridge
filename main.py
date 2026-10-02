@@ -195,19 +195,25 @@ class KBridge(Star):
         if not kb_id:
             return error_response("缺少 kb_id", status_code=400)
         target_kb = str(payload.get("target_kb") or "").strip()
-        client = await self.manager.get_client()
-        try:
-            items = await _retry_with_backoff(client.search_knowledge_bases(kb_id))
-        except IMAError as e:
-            return error_response(f"IMA 错误: {e.msg}", status_code=400)
-        matched = next(
-            (it for it in items if it.get("id") == kb_id or it.get("name") == kb_id),
-            None,
-        )
-        if matched is None and items:
-            matched = items[0]
-        if matched is None:
-            return error_response(f"未找到知识库: {kb_id}", status_code=404)
+        # 前端从知识库列表选择时直接携带名称，无需再搜索
+        kb_name = str(payload.get("kb_name") or "").strip()
+        if kb_name:
+            matched = {"id": kb_id, "name": kb_name}
+        else:
+            # 兼容手动输入 id/名称：先搜索匹配
+            client = await self.manager.get_client()
+            try:
+                items = await _retry_with_backoff(client.search_knowledge_bases(kb_id))
+            except IMAError as e:
+                return error_response(f"IMA 错误: {e.msg}", status_code=400)
+            matched = next(
+                (it for it in items if it.get("id") == kb_id or it.get("name") == kb_id),
+                None,
+            )
+            if matched is None and items:
+                matched = items[0]
+            if matched is None:
+                return error_response(f"未找到知识库: {kb_id}", status_code=404)
         sub = await self.manager.add_subscription(
             kb_id=matched["id"],
             kb_name=matched.get("name", matched["id"]),
@@ -257,6 +263,9 @@ class KBridge(Star):
     async def api_kbs(self):
         client = await self.manager.get_client()
         items = await _retry_with_backoff(client.search_knowledge_bases())
+        # 标记平台来源（供前端 select 分组）
+        for it in items:
+            it.setdefault("platform", "ima")
         self.logger.info(f"[KBridge] 查询 IMA 知识库列表: {len(items)} 个")
         return json_response(items)
 
