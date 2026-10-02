@@ -21,7 +21,7 @@ from astrbot.api.all import (
     AstrMessageEvent,
     Context,
     Star,
-    filter,
+    command,
     register,
 )
 
@@ -105,7 +105,7 @@ class KBridge(Star):
 
     # ---------- 命令 ----------
 
-    @filter.command("kbridge")
+    @command("kbridge")
     async def kbridge(self, event: AstrMessageEvent):
         args = (event.message_str or "").strip().split()
         if not args or args[0] in ("help", "h"):
