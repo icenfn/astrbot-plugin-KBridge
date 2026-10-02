@@ -1,0 +1,34 @@
+{
+  "ima_client_id": {
+    "description": "IMA Client ID（在 https://ima.qq.com/agent-interface 获取）",
+    "type": "string",
+    "default": "",
+    "secret": true
+  },
+  "ima_api_key": {
+    "description": "IMA API Key（在 https://ima.qq.com/agent-interface 获取）",
+    "type": "string",
+    "default": "",
+    "secret": true
+  },
+  "sync_interval_minutes": {
+    "description": "定时自动同步间隔（分钟），0 表示不启用自动同步",
+    "type": "int",
+    "default": 60
+  },
+  "target_kb_prefix": {
+    "description": "目标 AstrBot 知识库名称前缀（自动创建时使用，如 ima-）",
+    "type": "string",
+    "default": "ima-"
+  },
+  "auto_create_kb": {
+    "description": "目标 AstrBot 知识库不存在时自动创建",
+    "type": "bool",
+    "default": true
+  },
+  "max_concurrency": {
+    "description": "同步下载并发数（建议 1-5，受 IMA 接口频控限制）",
+    "type": "int",
+    "default": 3
+  }
+}
