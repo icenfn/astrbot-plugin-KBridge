@@ -107,11 +107,15 @@ class KBridge(Star):
 
     @command("kbridge")
     async def kbridge(self, event: AstrMessageEvent):
-        args = (event.message_str or "").strip().split()
-        if not args or args[0] in ("help", "h"):
+        # 新版 AstrBot：event.message_str 为完整消息（含命令名），先剥离命令前缀
+        raw = (event.message_str or "").strip()
+        tokens = raw.split()
+        if tokens and tokens[0].lstrip("/").lower() == "kbridge":
+            tokens = tokens[1:]
+        if not tokens or tokens[0] in ("help", "h"):
             yield event.plain_result(HELP_TEXT)
             return
-        cmd, rest = args[0].lower(), args[1:]
+        cmd, rest = tokens[0].lower(), tokens[1:]
         try:
             if cmd == "kbs":
                 yield await self._cmd_kbs(event)

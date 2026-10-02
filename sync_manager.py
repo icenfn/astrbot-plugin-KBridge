@@ -182,7 +182,7 @@ class SyncManager:
         eps = self.context.get_all_embedding_providers()
         if not eps:
             raise ValueError("未配置任何嵌入（Embedding）模型，无法自动创建知识库")
-        await kb_mgr.create_kb(name, embedding_provider_id=eps[0].provider_id, emoji="📥")
+        await kb_mgr.create_kb(name, embedding_provider_id=eps[0].provider_config.get("id") or "default", emoji="📥")
         kb = await kb_mgr.get_kb_by_name(name)
         if kb is None:
             raise ValueError(f"创建知识库失败: {name}")
