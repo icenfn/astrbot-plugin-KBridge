@@ -169,6 +169,7 @@ class SyncManager:
         sub = Subscription(kb_id=kb_id, kb_name=kb_name, target_kb=target_kb)
         subs.append(sub)
         await self._save_subs(subs)
+        logger.info(f"[KBridge] 添加订阅: {kb_name} ({kb_id}) -> {target_kb or '自动创建'}")
         return sub
 
     async def remove_subscription(self, index: int) -> Subscription:
@@ -180,6 +181,7 @@ class SyncManager:
         index_data = await self._get_index()
         index_data.pop(sub.kb_id, None)
         await self._save_index()
+        logger.info(f"[KBridge] 删除订阅: {sub.kb_name} ({sub.kb_id})")
         return sub
 
     async def resolve_target_kb(self, sub: Subscription):
@@ -216,6 +218,7 @@ class SyncManager:
 
     async def sync_subscription(self, sub: Subscription) -> SyncResult:
         result = SyncResult(kb_id=sub.kb_id)
+        logger.info(f"[KBridge] 开始同步订阅: {sub.kb_name} ({sub.kb_id})")
         try:
             client = await self.get_client()
             kb, kb_name = await self.resolve_target_kb(sub)
@@ -266,6 +269,10 @@ class SyncManager:
             sub.last_status = "ok" if result.failed == 0 else "partial"
             sub.last_error = "; ".join(result.errors[:5])
             await self._flush_sub(sub)
+            logger.info(
+                f"[KBridge] 同步完成 {sub.kb_name}: 共 {result.total} 条, "
+                f"新增 {result.synced}, 跳过 {result.skipped}, 失败 {result.failed}"
+            )
             return result
         except Exception as e:  # noqa: BLE001
             logger.exception(f"同步订阅失败 {sub.kb_id}")

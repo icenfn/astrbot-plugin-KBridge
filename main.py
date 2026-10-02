@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from functools import wraps
 
 from astrbot.api.all import (
     AstrBotConfig,
@@ -33,6 +34,23 @@ logger = logging.getLogger("astrbot")
 
 PLUGIN_NAME = "astrbot_plugin_kbridge"
 CRON_JOB_NAME = "kbridge_auto_sync"
+
+
+def webapi_handler(func):
+    """Web API 统一错误兜底：记录完整日志并返回可读错误，避免页面只看到 Internal server error。"""
+
+    @wraps(func)
+    async def wrapper(self, *args, **kwargs):
+        try:
+            return await func(self, *args, **kwargs)
+        except IMAError as e:
+            logger.warning(f"[KBridge] API {func.__name__} IMA 错误: code={e.code} msg={e.msg}")
+            return error_response(f"IMA 错误: {e.msg}", status_code=400)
+        except Exception:  # noqa: BLE001
+            logger.exception(f"[KBridge] API {func.__name__} 未捕获异常")
+            return error_response("内部错误，详见 AstrBot 日志", status_code=500)
+
+    return wrapper
 HELP_TEXT = """KBridge - 外部知识源订阅同步
 
 /kbridge kbs                   列出 IMA 知识库
@@ -81,6 +99,7 @@ class KBridge(Star):
         for route, handler, methods, desc in routes:
             self.context.register_web_api(route, handler, methods, desc)
 
+    @webapi_handler
     async def api_config_get(self):
         """返回平台配置状态（secret 字段不回显原文，只回是否已配置）。"""
         return json_response(
@@ -112,6 +131,7 @@ class KBridge(Star):
             }
         )
 
+    @webapi_handler
     async def api_config_save(self):
         payload = await request.json(default={})
         fields = payload.get("fields") or {}
@@ -140,8 +160,10 @@ class KBridge(Star):
         if "sync_interval_minutes" in saved:
             minutes = int(self.config.get("sync_interval_minutes", 0) or 0)
             await self._set_cron(minutes > 0, minutes if minutes > 0 else None)
+        logger.info(f"[KBridge] 页面保存平台配置成功: {saved}")
         return json_response({"saved": saved})
 
+    @webapi_handler
     async def api_stats(self):
         subs = await self.manager.get_subs()
         return json_response(
@@ -159,10 +181,12 @@ class KBridge(Star):
             }
         )
 
+    @webapi_handler
     async def api_subs(self):
         subs = await self.manager.get_subs()
         return json_response([s.to_dict() for s in subs])
 
+    @webapi_handler
     async def api_subs_add(self):
         payload = await request.json(default={})
         kb_id = str(payload.get("kb_id") or "").strip()
@@ -189,6 +213,7 @@ class KBridge(Star):
         )
         return json_response({"added": True, "sub": sub.to_dict()})
 
+    @webapi_handler
     async def api_subs_remove(self, idx: int):
         try:
             sub = await self.manager.remove_subscription(idx)
@@ -196,6 +221,7 @@ class KBridge(Star):
             return error_response(str(e), status_code=400)
         return json_response({"removed": True, "name": sub.kb_name})
 
+    @webapi_handler
     async def api_sync(self):
         payload = await request.json(default={})
         if self.manager.is_syncing:
@@ -209,6 +235,7 @@ class KBridge(Star):
         asyncio.get_running_loop().create_task(self._bg_sync(index))
         return json_response({"started": True})
 
+    @webapi_handler
     async def api_cron(self):
         payload = await request.json(default={})
         on = bool(payload.get("on"))
@@ -224,9 +251,11 @@ class KBridge(Star):
             return error_response(str(e), status_code=400)
         return json_response({"enabled": enabled, "message": desc})
 
+    @webapi_handler
     async def api_kbs(self):
         client = await self.manager.get_client()
         items = await _retry_with_backoff(client.search_knowledge_bases())
+        logger.info(f"[KBridge] 查询 IMA 知识库列表: {len(items)} 个")
         return json_response(items)
 
     async def _bg_sync(self, index: int | None) -> None:
