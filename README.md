@@ -10,6 +10,7 @@
 - **定时同步**：按配置间隔自动同步（AstrBot Cron 机制）
 - **内容落地**：网页/公众号文章转为 Markdown；PDF/DOCX/XLSX/MD/TXT/EPUB 原样入库
 - **命令管理**：`/kbridge` 全命令管理，无需改代码
+- **WebUI 管理页面**：插件自带 GUI 页面，订阅/同步/定时可视化操作
 
 ## 安装
 
@@ -19,6 +20,16 @@
    - `sync_interval_minutes`：定时同步间隔（分钟），0 关闭
    - `target_kb_prefix`：自动创建目标知识库的名称前缀（默认 `ima-`）
    - `auto_create_kb`：自动创建目标知识库（需已配置 Embedding 模型）
+
+## WebUI 管理页面
+
+插件自带管理页面（AstrBot Plugin Pages）：在 WebUI 插件详情页打开 **KBridge 管理**（`pages/dashboard`）。支持：
+
+- 状态总览：IMA 连接、订阅数、已同步文档数、定时任务状态
+- 添加订阅：下拉选择 IMA 知识库，指定目标 AstrBot 知识库名（留空自动创建）
+- 订阅管理：单个同步 / 删除，状态与错误信息展示
+- 定时同步：开关 + 间隔设置
+- 同步进度：后台执行 + 自动轮询刷新
 
 ## 命令
 
@@ -50,9 +61,10 @@
 
 ```
 astrbot-plugin-KBridge/
-├── main.py            # Star 入口与 /kbridge 命令
+├── main.py            # Star 入口、/kbridge 命令、Web API
 ├── ima_client.py      # IMA OpenAPI 客户端
 ├── sync_manager.py    # 订阅管理 + 同步核心
+├── pages/dashboard/   # WebUI 管理页面（index.html / app.js / style.css）
 ├── metadata.yaml      # 插件元数据
 ├── _conf_schema.json  # 插件配置
 └── requirements.txt

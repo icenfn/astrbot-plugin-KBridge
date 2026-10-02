@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KBridge 管理</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>KBridge 管理</h1>
+      <p class="subtitle">外部知识源（ima）订阅同步</p>
+    </div>
+    <button id="btn-refresh" class="btn ghost">刷新</button>
+  </header>
+
+  <main>
+    <!-- 状态卡片 -->
+    <section class="cards">
+      <div class="card">
+        <div class="card-label">IMA 连接</div>
+        <div id="stat-ima" class="card-value">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">订阅数</div>
+        <div id="stat-subs" class="card-value">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">已同步文档</div>
+        <div id="stat-synced" class="card-value">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">定时同步</div>
+        <div id="stat-cron" class="card-value">—</div>
+      </div>
+    </section>
+
+    <!-- 添加订阅 -->
+    <section class="panel">
+      <h2>添加订阅</h2>
+      <div class="row">
+        <select id="kb-select" class="input grow">
+          <option value="">加载 IMA 知识库…</option>
+        </select>
+        <input id="kb-target" class="input" type="text" placeholder="目标 AstrBot 知识库名（留空自动创建）" />
+        <button id="btn-add" class="btn primary">添加订阅</button>
+      </div>
+      <p id="add-msg" class="msg"></p>
+    </section>
+
+    <!-- 订阅列表 -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>订阅列表</h2>
+        <button id="btn-sync-all" class="btn primary">同步全部</button>
+      </div>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>知识库</th>
+            <th>目标库</th>
+            <th>状态</th>
+            <th>已同步</th>
+            <th>上次同步</th>
+            <th class="th-ops">操作</th>
+          </tr>
+        </thead>
+        <tbody id="subs-body">
+          <tr><td colspan="6" class="empty">加载中…</td></tr>
+        </tbody>
+      </table>
+      <p id="sync-msg" class="msg"></p>
+    </section>
+
+    <!-- 定时同步 -->
+    <section class="panel">
+      <h2>定时同步</h2>
+      <div class="row">
+        <label class="switch">
+          <input id="cron-on" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+        <span id="cron-label" class="hint">未启用</span>
+        <input id="cron-minutes" class="input" type="number" min="1" placeholder="间隔（分钟）" />
+        <button id="btn-cron" class="btn">保存设置</button>
+      </div>
+      <p id="cron-msg" class="msg"></p>
+    </section>
+  </main>
+
+  <script src="/api/plugin/page/bridge-sdk.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

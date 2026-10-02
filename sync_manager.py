@@ -110,6 +110,12 @@ class SyncManager:
         self._client: IMAClient | None = None
         self._index_cache: dict[str, dict[str, Any]] | None = None
         self._sem: asyncio.Semaphore | None = None
+        self._sync_lock = asyncio.Lock()
+        self._syncing = False
+
+    @property
+    def is_syncing(self) -> bool:
+        return self._syncing
 
     # ---------- 基础 ----------
 
@@ -263,18 +269,26 @@ class SyncManager:
             raise
 
     async def sync_all(self) -> list[SyncResult]:
-        results: list[SyncResult] = []
-        for sub in await self.get_subs():
-            if not sub.enabled:
-                continue
+        """同步全部订阅（防重入：已有同步在跑时直接返回空结果）。"""
+        if self._syncing:
+            return []
+        async with self._sync_lock:
+            self._syncing = True
             try:
-                results.append(await self.sync_subscription(sub))
-            except Exception as e:  # noqa: BLE001
-                r = SyncResult(kb_id=sub.kb_id)
-                r.failed = 1
-                r.errors.append(str(e))
-                results.append(r)
-        return results
+                results: list[SyncResult] = []
+                for sub in await self.get_subs():
+                    if not sub.enabled:
+                        continue
+                    try:
+                        results.append(await self.sync_subscription(sub))
+                    except Exception as e:  # noqa: BLE001
+                        r = SyncResult(kb_id=sub.kb_id)
+                        r.failed = 1
+                        r.errors.append(str(e))
+                        results.append(r)
+                return results
+            finally:
+                self._syncing = False
 
     async def _process_item(
         self, kb, kb_name: str, sub: Subscription, media_id: str, item: dict, kb_index: dict

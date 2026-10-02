@@ -24,12 +24,14 @@ from astrbot.api.all import (
     command,
     register,
 )
+from astrbot.api.web import error_response, json_response, request
 
 from .ima_client import IMAError, _retry_with_backoff
 from .sync_manager import KV_SUBS, SyncManager
 
 logger = logging.getLogger("astrbot")
 
+PLUGIN_NAME = "astrbot_plugin_kbridge"
 CRON_JOB_NAME = "kbridge_auto_sync"
 HELP_TEXT = """KBridge - 外部知识源订阅同步
 
@@ -50,6 +52,121 @@ class KBridge(Star):
         self.manager = SyncManager(context, config)
         self._cron_job_id: str | None = None
         self._cron_initialized = False
+        self._register_web_apis()
+
+    # ---------- WebUI 页面 API ----------
+
+    def _register_web_apis(self) -> None:
+        routes = [
+            (f"/{PLUGIN_NAME}/stats", self.api_stats, ["GET"], "KBridge 总览状态"),
+            (f"/{PLUGIN_NAME}/subs", self.api_subs, ["GET"], "订阅列表"),
+            (f"/{PLUGIN_NAME}/subs/add", self.api_subs_add, ["POST"], "添加订阅"),
+            (f"/{PLUGIN_NAME}/subs/<idx>/remove", self.api_subs_remove, ["POST"], "删除订阅"),
+            (f"/{PLUGIN_NAME}/sync", self.api_sync, ["POST"], "触发同步"),
+            (f"/{PLUGIN_NAME}/cron", self.api_cron, ["POST"], "定时同步开关"),
+            (f"/{PLUGIN_NAME}/kbs", self.api_kbs, ["GET"], "IMA 知识库列表"),
+        ]
+        for route, handler, methods, desc in routes:
+            self.context.register_web_api(route, handler, methods, desc)
+
+    async def api_stats(self):
+        subs = await self.manager.get_subs()
+        return json_response(
+            {
+                "sub_count": len(subs),
+                "total_synced": sum(s.synced_count for s in subs),
+                "is_syncing": self.manager.is_syncing,
+                "cron_enabled": self._cron_job_id is not None,
+                "cron_interval": int(self.config.get("sync_interval_minutes", 60) or 0),
+                "ima_configured": bool(
+                    self.config.get("ima_client_id") and self.config.get("ima_api_key")
+                ),
+                "auto_create_kb": bool(self.config.get("auto_create_kb", True)),
+                "target_prefix": self.config.get("target_kb_prefix", "ima-"),
+            }
+        )
+
+    async def api_subs(self):
+        subs = await self.manager.get_subs()
+        return json_response([s.to_dict() for s in subs])
+
+    async def api_subs_add(self):
+        payload = await request.json(default={})
+        kb_id = str(payload.get("kb_id") or "").strip()
+        if not kb_id:
+            return error_response("缺少 kb_id", status_code=400)
+        target_kb = str(payload.get("target_kb") or "").strip()
+        client = await self.manager.get_client()
+        try:
+            items = await _retry_with_backoff(client.search_knowledge_bases(kb_id))
+        except IMAError as e:
+            return error_response(f"IMA 错误: {e.msg}", status_code=400)
+        matched = next(
+            (it for it in items if it.get("id") == kb_id or it.get("name") == kb_id),
+            None,
+        )
+        if matched is None and items:
+            matched = items[0]
+        if matched is None:
+            return error_response(f"未找到知识库: {kb_id}", status_code=404)
+        sub = await self.manager.add_subscription(
+            kb_id=matched["id"],
+            kb_name=matched.get("name", matched["id"]),
+            target_kb=target_kb,
+        )
+        return json_response({"added": True, "sub": sub.to_dict()})
+
+    async def api_subs_remove(self, idx: int):
+        try:
+            sub = await self.manager.remove_subscription(idx)
+        except ValueError as e:
+            return error_response(str(e), status_code=400)
+        return json_response({"removed": True, "name": sub.kb_name})
+
+    async def api_sync(self):
+        payload = await request.json(default={})
+        if self.manager.is_syncing:
+            return error_response("已有同步任务在运行", status_code=409)
+        index = payload.get("index")
+        if index is not None and not isinstance(index, int):
+            try:
+                index = int(index)
+            except (TypeError, ValueError):
+                return error_response("index 必须是数字", status_code=400)
+        asyncio.get_running_loop().create_task(self._bg_sync(index))
+        return json_response({"started": True})
+
+    async def api_cron(self):
+        payload = await request.json(default={})
+        on = bool(payload.get("on"))
+        minutes = payload.get("minutes")
+        if minutes is not None:
+            try:
+                minutes = int(minutes)
+            except (TypeError, ValueError):
+                return error_response("minutes 必须是数字", status_code=400)
+        try:
+            desc, enabled = await self._set_cron(on, minutes)
+        except ValueError as e:
+            return error_response(str(e), status_code=400)
+        return json_response({"enabled": enabled, "message": desc})
+
+    async def api_kbs(self):
+        client = await self.manager.get_client()
+        items = await _retry_with_backoff(client.search_knowledge_bases())
+        return json_response(items)
+
+    async def _bg_sync(self, index: int | None) -> None:
+        """后台同步任务（WebUI 触发）。"""
+        try:
+            if index is None:
+                await self.manager.sync_all()
+            else:
+                subs = await self.manager.get_subs()
+                if 0 <= index < len(subs):
+                    await self.manager.sync_subscription(subs[index])
+        except Exception:  # noqa: BLE001
+            logger.exception("KBridge 页面触发同步失败")
 
     # ---------- 生命周期 ----------
 
@@ -79,29 +196,10 @@ class KBridge(Star):
     async def _sync_cron_job(self) -> None:
         """根据配置 sync_interval_minutes 同步定时任务状态。"""
         minutes = int(self.config.get("sync_interval_minutes", 60) or 0)
-        cron_mgr = self.context.cron_manager
-        # 先清理现有任务
         try:
-            jobs = await cron_mgr.list_jobs()
-            for job in jobs:
-                if job.name == CRON_JOB_NAME:
-                    if job.job_id == self._cron_job_id:
-                        self._cron_job_id = None
-                    await cron_mgr.delete_job(job.job_id)
+            await self._set_cron(minutes > 0, minutes if minutes > 0 else None)
         except Exception:  # noqa: BLE001
-            logger.warning("KBridge 清理定时任务失败", exc_info=True)
-        if minutes <= 0:
-            self._cron_job_id = None
-            return
-        expr = _minutes_to_cron(minutes)
-        job = await cron_mgr.add_basic_job(
-            name=CRON_JOB_NAME,
-            cron_expression=expr,
-            handler=self._auto_sync,
-            description="KBridge 定时同步外部知识源",
-            persistent=False,
-        )
-        self._cron_job_id = job.job_id
+            logger.exception("KBridge 初始化定时任务失败")
 
     # ---------- 命令 ----------
 
@@ -212,26 +310,45 @@ class KBridge(Star):
         results = await self.manager.sync_all()
         yield event.plain_result("\n\n".join(_format_result(r) for r in results))
 
+    async def _set_cron(self, on: bool, minutes: int | None = None) -> tuple[str, bool]:
+        """开启/关闭定时同步。返回 (描述, 是否启用)。"""
+        cron_mgr = self.context.cron_manager
+        # 先清理现有任务
+        try:
+            jobs = await cron_mgr.list_jobs()
+            for job in jobs:
+                if job.name == CRON_JOB_NAME:
+                    if job.job_id == self._cron_job_id:
+                        self._cron_job_id = None
+                    await cron_mgr.delete_job(job.job_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("KBridge 清理定时任务失败", exc_info=True)
+        if not on:
+            self._cron_job_id = None
+            return "已关闭定时同步", False
+        if minutes is None or minutes <= 0:
+            minutes = int(self.config.get("sync_interval_minutes", 60) or 60)
+        self.config["sync_interval_minutes"] = minutes
+        self.config.save_config()
+        job = await cron_mgr.add_basic_job(
+            name=CRON_JOB_NAME,
+            cron_expression=_minutes_to_cron(minutes),
+            handler=self._auto_sync,
+            description="KBridge 定时同步外部知识源",
+            persistent=False,
+        )
+        self._cron_job_id = job.job_id
+        return f"已开启定时同步：每 {minutes} 分钟", True
+
     async def _cmd_cron(self, event: AstrMessageEvent, rest: list[str]):
         if not rest or rest[0] not in ("on", "off"):
             return event.plain_result("用法: /kbridge cron on [分钟] | off")
         if rest[0] == "off":
-            self._cron_job_id = None
-            cron_mgr = self.context.cron_manager
-            jobs = await cron_mgr.list_jobs()
-            for job in jobs:
-                if job.name == CRON_JOB_NAME:
-                    await cron_mgr.delete_job(job.job_id)
-            return event.plain_result("已关闭定时同步")
-        minutes = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else int(
-            self.config.get("sync_interval_minutes", 60) or 60
-        )
-        if minutes <= 0:
-            return event.plain_result("分钟数必须大于 0")
-        self.config["sync_interval_minutes"] = minutes
-        self.config.save_config()
-        await self._sync_cron_job()
-        return event.plain_result(f"已开启定时同步：每 {minutes} 分钟")
+            desc, _ = await self._set_cron(False)
+            return event.plain_result(desc)
+        minutes = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else None
+        desc, _ = await self._set_cron(True, minutes)
+        return event.plain_result(desc)
 
 
 def _minutes_to_cron(minutes: int) -> str:
