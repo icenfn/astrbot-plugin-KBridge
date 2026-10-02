@@ -157,3 +157,28 @@ main { padding: 8px 24px 40px; max-width: 960px; margin: 0 auto; }
 }
 .switch input:checked + .slider { background: var(--good); }
 .switch input:checked + .slider::before { transform: translateX(20px); }
+
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+.chip:hover { border-color: var(--primary); }
+.chip.active { border-color: var(--primary); background: var(--primary); color: #fff; }
+.chip-badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: rgba(128,128,128,.15); }
+.chip-badge.ok { color: var(--good); }
+.chip-badge.warn { color: var(--warn); }
+.chip-badge.soon { color: var(--dim); }
+.chip.active .chip-badge { color: #fff; }
+
+.pform { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+.pform-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; width: 100%; max-width: 640px; }
+.pform-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--dim); }

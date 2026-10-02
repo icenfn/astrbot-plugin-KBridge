@@ -56,6 +56,16 @@ class KBridge(Star):
 
     # ---------- WebUI 页面 API ----------
 
+    # 允许页面写入的配置项白名单
+    CONFIG_WRITABLE = {
+        "ima_client_id": "str",
+        "ima_api_key": "str",
+        "target_kb_prefix": "str",
+        "auto_create_kb": "bool",
+        "sync_interval_minutes": "int",
+        "max_concurrency": "int",
+    }
+
     def _register_web_apis(self) -> None:
         routes = [
             (f"/{PLUGIN_NAME}/stats", self.api_stats, ["GET"], "KBridge 总览状态"),
@@ -65,9 +75,72 @@ class KBridge(Star):
             (f"/{PLUGIN_NAME}/sync", self.api_sync, ["POST"], "触发同步"),
             (f"/{PLUGIN_NAME}/cron", self.api_cron, ["POST"], "定时同步开关"),
             (f"/{PLUGIN_NAME}/kbs", self.api_kbs, ["GET"], "IMA 知识库列表"),
+            (f"/{PLUGIN_NAME}/config", self.api_config_get, ["GET"], "读取平台配置"),
+            (f"/{PLUGIN_NAME}/config", self.api_config_save, ["POST"], "保存平台配置"),
         ]
         for route, handler, methods, desc in routes:
             self.context.register_web_api(route, handler, methods, desc)
+
+    async def api_config_get(self):
+        """返回平台配置状态（secret 字段不回显原文，只回是否已配置）。"""
+        return json_response(
+            {
+                "platforms": {
+                    "ima": {
+                        "name": "腾讯 ima",
+                        "supported": True,
+                        "fields": [
+                            {"key": "ima_client_id", "label": "Client ID", "secret": False},
+                            {"key": "ima_api_key", "label": "API Key", "secret": True},
+                        ],
+                    },
+                    "obsidian": {"name": "Obsidian", "supported": False},
+                    "github": {"name": "GitHub Repository", "supported": False},
+                    "notebook": {"name": "Open Notebook", "supported": False},
+                    "url2kb": {"name": "url2kb", "supported": False},
+                },
+                "values": {
+                    "ima_client_id": bool(self.config.get("ima_client_id")),
+                    "ima_api_key": bool(self.config.get("ima_api_key")),
+                },
+                "common": {
+                    "target_kb_prefix": self.config.get("target_kb_prefix", "ima-"),
+                    "auto_create_kb": bool(self.config.get("auto_create_kb", True)),
+                    "sync_interval_minutes": int(self.config.get("sync_interval_minutes", 60) or 0),
+                    "max_concurrency": int(self.config.get("max_concurrency", 3) or 3),
+                },
+            }
+        )
+
+    async def api_config_save(self):
+        payload = await request.json(default={})
+        fields = payload.get("fields") or {}
+        if not isinstance(fields, dict):
+            return error_response("fields 必须是对象", status_code=400)
+        saved = []
+        for key, value in fields.items():
+            if key not in self.CONFIG_WRITABLE:
+                continue
+            vtype = self.CONFIG_WRITABLE[key]
+            if vtype == "str":
+                self.config[key] = str(value).strip()
+            elif vtype == "bool":
+                self.config[key] = bool(value)
+            elif vtype == "int":
+                try:
+                    self.config[key] = max(0, int(value))
+                except (TypeError, ValueError):
+                    return error_response(f"{key} 必须是数字", status_code=400)
+            saved.append(key)
+        self.config.save_config()
+        # 凭据变更后重置 IMA 客户端
+        if "ima_client_id" in saved or "ima_api_key" in saved:
+            await self.manager.reset_client()
+        # 同步间隔变更后重建定时任务
+        if "sync_interval_minutes" in saved:
+            minutes = int(self.config.get("sync_interval_minutes", 0) or 0)
+            await self._set_cron(minutes > 0, minutes if minutes > 0 else None)
+        return json_response({"saved": saved})
 
     async def api_stats(self):
         subs = await self.manager.get_subs()

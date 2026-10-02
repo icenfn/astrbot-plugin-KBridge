@@ -2,6 +2,8 @@ const bridge = window.AstrBotPluginPage;
 const $ = (id) => document.getElementById(id);
 
 let pollTimer = null;
+let platformConfig = null;
+let currentPlatform = "ima";
 
 function setMsg(el, text, ok = true) {
   el.textContent = text || "";
@@ -145,6 +147,92 @@ async function refresh() {
   await Promise.all([loadStats(), loadSubs()]);
 }
 
+// ---------- 平台配置 ----------
+
+async function loadConfig() {
+  platformConfig = await bridge.apiGet("config");
+  renderChips();
+  renderPlatformForm(currentPlatform);
+}
+
+function renderChips() {
+  const chips = $("platform-chips");
+  chips.textContent = "";
+  const platforms = platformConfig.platforms;
+  Object.entries(platforms).forEach(([id, p]) => {
+    const chip = document.createElement("button");
+    chip.className = "chip" + (id === currentPlatform ? " active" : "");
+    const set = id === "ima" && platformConfig.values["ima_client_id"] && platformConfig.values["ima_api_key"];
+    chip.innerHTML =
+      `<span class="chip-name">${p.name}</span>` +
+      (p.supported
+        ? `<span class="chip-badge ${set ? "ok" : "warn"}">${set ? "已配置" : "未配置"}</span>`
+        : `<span class="chip-badge soon">即将支持</span>`);
+    chip.onclick = () => {
+      currentPlatform = id;
+      renderChips();
+      renderPlatformForm(id);
+    };
+    chips.append(chip);
+  });
+}
+
+function renderPlatformForm(id) {
+  const wrap = $("platform-form");
+  wrap.textContent = "";
+  const p = platformConfig.platforms[id];
+  if (!p) return;
+  if (!p.supported) {
+    const div = document.createElement("div");
+    div.className = "hint";
+    div.textContent = `${p.name} 即将支持，敬请期待`;
+    wrap.append(div);
+    return;
+  }
+  const grid = document.createElement("div");
+  grid.className = "pform-grid";
+  const fieldInputs = {};
+  p.fields.forEach((f) => {
+    const label = document.createElement("label");
+    label.className = "pform-field";
+    const span = document.createElement("span");
+    span.textContent = f.label;
+    const input = document.createElement("input");
+    input.className = "input";
+    input.type = "text";
+    input.autocomplete = "off";
+    const set = platformConfig.values[f.key];
+    input.placeholder = set ? "已配置（留空保持不变）" : `输入${f.label}`;
+    input.dataset.key = f.key;
+    fieldInputs[f.key] = input;
+    label.append(span, input);
+    grid.append(label);
+  });
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "btn primary";
+  saveBtn.textContent = "保存配置";
+  saveBtn.onclick = async () => {
+    const fields = {};
+    p.fields.forEach((f) => {
+      const v = fieldInputs[f.key].value.trim();
+      if (v) fields[f.key] = v;
+    });
+    if (!Object.keys(fields).length) {
+      setMsg($("config-msg"), "没有需要保存的内容", false);
+      return;
+    }
+    try {
+      const r = await bridge.apiPost("config", { fields });
+      setMsg($("config-msg"), `已保存：${r.saved.join(", ")}`);
+      await loadConfig();
+      await loadStats();
+    } catch (e) {
+      setMsg($("config-msg"), e.message, false);
+    }
+  };
+  wrap.append(grid, saveBtn);
+}
+
 async function main() {
   const context = await bridge.ready();
   const applyTheme = (isDark) => {
@@ -181,6 +269,7 @@ async function main() {
     }
   };
   await loadKbs();
+  await loadConfig();
   await refresh();
 }
 

@@ -132,6 +132,12 @@ class SyncManager:
         if self._client:
             await self._client.close()
 
+    async def reset_client(self) -> None:
+        """配置变更后重置 IMA 客户端，使新 Key 生效。"""
+        if self._client:
+            await self._client.close()
+        self._client = None
+
     async def get_subs(self) -> list[Subscription]:
         raw = await self.context.get_kv_data(KV_SUBS, [])
         return [Subscription.from_dict(d) for d in raw]

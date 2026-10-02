@@ -25,6 +25,7 @@
 
 插件自带管理页面（AstrBot Plugin Pages）：在 WebUI 插件详情页打开 **KBridge 管理**（`pages/dashboard`）。支持：
 
+- 平台配置：页面内填写各平台凭据（当前 ima 的 Client ID / API Key），多平台架构预留 Obsidian / GitHub Repository / Open Notebook / url2kb
 - 状态总览：IMA 连接、订阅数、已同步文档数、定时任务状态
 - 添加订阅：下拉选择 IMA 知识库，指定目标 AstrBot 知识库名（留空自动创建）
 - 订阅管理：单个同步 / 删除，状态与错误信息展示
