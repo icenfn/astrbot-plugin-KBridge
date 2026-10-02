@@ -266,7 +266,7 @@ class SyncManager:
             cursor = ""
             while True:
                 batch, is_end, next_cursor = await _retry_with_backoff(
-                    client.list_kb_items(sub.kb_id, cursor=cursor)
+                    lambda: client.list_kb_items(sub.kb_id, cursor=cursor)
                 )
                 items.extend(batch)
                 if is_end or not next_cursor or len(items) >= MAX_ITEM_SAVE:
@@ -343,7 +343,9 @@ class SyncManager:
         self, kb, kb_name: str, sub: Subscription, media_id: str, item: dict, kb_index: dict
     ) -> None:
         client = await self.get_client()
-        info = await _retry_with_backoff(client.get_media_info(media_id))
+        # 轻节流：降低连续调用触发 IMA 网关限流（HTTP 403/429）的概率
+        await asyncio.sleep(0.05)
+        info = await _retry_with_backoff(lambda: client.get_media_info(media_id))
         media_type = int(info.get("media_type") or 0)
         title = str(item.get("title") or media_id)
 

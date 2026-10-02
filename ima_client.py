@@ -19,16 +19,21 @@ BASE_PATH = "/openapi/wiki/v1"
 
 # 可重试错误码
 RETRYABLE_CODES = {110010, 110021}
+# HTTP 层限流/服务端错误也重试（指数退避）
+RETRYABLE_HTTP = {403, 429, 500, 502, 503, 504}
+# 官方 skill 版本（随 ima-skills 包更新）
+SKILL_VERSION = "1.1.10"
 
 
 class IMAError(Exception):
-    def __init__(self, code: int, msg: str):
+    def __init__(self, code: int, msg: str, http_status: int | None = None):
         super().__init__(f"[{code}] {msg}")
         self.code = code
         self.msg = msg
+        self.http_status = http_status
 
     def retryable(self) -> bool:
-        return self.code in RETRYABLE_CODES
+        return self.code in RETRYABLE_CODES or self.http_status in RETRYABLE_HTTP
 
 
 class IMAClient:
@@ -55,6 +60,7 @@ class IMAClient:
         headers = {
             "ima-openapi-clientid": self._client_id,
             "ima-openapi-apikey": self._api_key,
+            "ima-openapi-ctx": f"skill_version={SKILL_VERSION}",
             "Content-Type": "application/json",
         }
         session = await self._get_session()
@@ -63,8 +69,9 @@ class IMAClient:
                 resp.raise_for_status()
                 payload = await resp.json(content_type=None)
         except aiohttp.ClientError as e:
+            status = getattr(e, "status", None)
             logger.error(f"IMA API 请求失败: {endpoint}: {e}")
-            raise IMAError(-1, f"网络错误: {e}") from e
+            raise IMAError(-1, f"网络错误: {e}", http_status=status) from e
 
         code = payload.get("code", -1)
         msg = payload.get("msg", "unknown error")
@@ -151,13 +158,17 @@ class IMAClient:
 
 
 async def _retry_with_backoff(
-    coro: Any, retries: int = 3, base_delay: float = 1.0
+    fn: Any, retries: int = 3, base_delay: float = 1.0
 ) -> Any:
-    """对可重试的 IMAError 做指数退避重试。"""
+    """对可重试的 IMAError 做指数退避重试。
+
+    fn 必须是可重复调用的工厂（lambda），不能传已创建的 coroutine 对象
+    （coroutine 只能 await 一次，重试会 RuntimeError）。
+    """
     delay = base_delay
     for attempt in range(retries):
         try:
-            return await coro
+            return await fn()
         except IMAError as e:
             if not e.retryable() or attempt == retries - 1:
                 raise

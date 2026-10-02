@@ -342,6 +342,53 @@ svg { width: 18px; height: 18px; flex: none; }
 .schedule-body .pfield { flex: 1; min-width: 160px; }
 .schedule-hint { color: var(--dim); font-size: 13px; margin: 14px 0 0; }
 
+/* ---------- 同步日志 ---------- */
+.log-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+  max-width: 900px;
+  margin-top: 16px;
+}
+.log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 10px;
+}
+.log-list {
+  max-height: 380px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.log-line {
+  display: flex;
+  gap: 10px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  align-items: flex-start;
+}
+.log-line:last-child { border-bottom: none; }
+.log-time { color: var(--dim); flex: none; white-space: nowrap; }
+.log-lv { flex: none; width: 40px; font-weight: 700; color: var(--good); }
+.log-msg { word-break: break-all; white-space: pre-wrap; }
+.log-line.err { background: var(--danger-soft); }
+.log-line.err .log-lv { color: var(--danger); }
+.log-line.warn { background: var(--warn-soft); }
+.log-line.warn .log-lv { color: var(--warn); }
+.log-line.dbg .log-lv { color: var(--dim); }
+.log-empty { padding: 22px 12px; text-align: center; font-family: inherit; }
+.add-hint { margin: 10px 0 0; font-size: 12px; }
+
 /* ---------- 开关 ---------- */
 .switch { position: relative; display: inline-block; width: 46px; height: 26px; flex: none; }
 .switch input { opacity: 0; width: 0; height: 0; }

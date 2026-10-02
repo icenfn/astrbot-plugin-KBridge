@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 from functools import wraps
+from pathlib import Path
 
 from astrbot.api.all import (
     AstrBotConfig,
@@ -34,6 +37,12 @@ logger = logging.getLogger("astrbot")
 
 PLUGIN_NAME = "astrbot_plugin_kbridge"
 CRON_JOB_NAME = "kbridge_auto_sync"
+
+# 解析 AstrBot 日志文件行: [时间] [tag] [LEVEL] [vX] [file:line]: message
+_LOG_LINE_RE = re.compile(
+    r"^\[(?P<time>[\d\- :.]+)\] \[(?P<tag>[^\]]+)\] \[(?P<level>[A-Z]+)\](?: \[v[^\]]+\])? \[[^\]]+\]: (?P<message>.*)$"
+)
+_LOG_KEYWORDS = ("KBridge", "astrbot_plugin_kbridge", "IMA API")
 
 
 def webapi_handler(func):
@@ -97,9 +106,71 @@ class KBridge(Star):
             (f"/{PLUGIN_NAME}/kbs", self.api_kbs, ["GET"], "IMA 知识库列表"),
             (f"/{PLUGIN_NAME}/config", self.api_config_get, ["GET"], "读取平台配置"),
             (f"/{PLUGIN_NAME}/config", self.api_config_save, ["POST"], "保存平台配置"),
+            (f"/{PLUGIN_NAME}/logs", self.api_logs, ["GET"], "KBridge 同步日志"),
         ]
         for route, handler, methods, desc in routes:
             self.context.register_web_api(route, handler, methods, desc)
+
+    @staticmethod
+    def _log_file_path() -> Path | None:
+        """定位 AstrBot 主日志文件（logs/astrbot.log）。"""
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
+            return Path(get_astrbot_data_path()) / "logs" / "astrbot.log"
+        except Exception:  # noqa: BLE001
+            # data/plugins/astrbot_plugin_kbridge/main.py -> parents[2] == data/
+            alt = Path(__file__).resolve().parents[2] / "logs" / "astrbot.log"
+            return alt if alt.exists() else None
+
+    @staticmethod
+    def _tail_lines(path: Path, n: int) -> list[str]:
+        """从文件尾部读取最多 n 行（UTF-8，容错）。"""
+        try:
+            with open(path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                if size == 0:
+                    return []
+                block = 65536
+                data = b""
+                pos = size
+                while pos > 0 and len(data) < block * 16:  # 最多 1MB
+                    start = max(0, pos - block)
+                    f.seek(start)
+                    chunk = f.read(pos - start)
+                    data = chunk + data
+                    pos = start
+                    if chunk.count(b"\n") >= n * 2:
+                        break
+            return data.decode("utf-8", errors="ignore").splitlines()
+        except OSError:
+            return []
+
+    @webapi_handler
+    async def api_logs(self):
+        """返回与 KBridge 相关的最近日志（最新在前）。lines 默认 100，最多 500。"""
+        try:
+            n = max(1, min(int(request.query.get("lines") or 100), 500))
+        except (TypeError, ValueError):
+            n = 100
+        path = self._log_file_path()
+        if path is None:
+            return json_response({"items": [], "path": None})
+        entries = []
+        for raw in self._tail_lines(path, n * 20):
+            m = _LOG_LINE_RE.match(raw)
+            if not m:
+                if entries and raw.strip():
+                    entries[-1]["message"] += "\n" + raw.rstrip()
+                continue
+            msg = m.group("message")
+            if not any(k in msg or k in m.group("tag") for k in _LOG_KEYWORDS):
+                continue
+            entries.append(
+                {"time": m.group("time"), "level": m.group("level"), "message": msg}
+            )
+        return json_response({"items": entries[-n:][::-1], "path": str(path)})
 
     @webapi_handler
     async def api_config_get(self):
@@ -203,7 +274,7 @@ class KBridge(Star):
             # 兼容手动输入 id/名称：先搜索匹配
             client = await self.manager.get_client()
             try:
-                items = await _retry_with_backoff(client.search_knowledge_bases(kb_id))
+                items = await _retry_with_backoff(lambda: client.search_knowledge_bases(kb_id))
             except IMAError as e:
                 return error_response(f"IMA 错误: {e.msg}", status_code=400)
             matched = next(
@@ -223,7 +294,12 @@ class KBridge(Star):
         return json_response({"added": True, "sub": sub.to_dict()})
 
     @webapi_handler
-    async def api_subs_remove(self, idx: int):
+    async def api_subs_remove(self, idx):
+        # AstrBot 路由路径参数以字符串传入，必须显式转 int
+        try:
+            idx = int(idx)
+        except (TypeError, ValueError):
+            return error_response("idx 必须是数字", status_code=400)
         try:
             sub = await self.manager.remove_subscription(idx)
         except ValueError as e:
@@ -263,7 +339,7 @@ class KBridge(Star):
     @webapi_handler
     async def api_kbs(self):
         client = await self.manager.get_client()
-        items = await _retry_with_backoff(client.search_knowledge_bases())
+        items = await _retry_with_backoff(lambda: client.search_knowledge_bases())
         # 标记平台来源（供前端 select 分组）
         for it in items:
             it.setdefault("platform", "ima")
@@ -350,7 +426,7 @@ class KBridge(Star):
 
     async def _cmd_kbs(self, event: AstrMessageEvent):
         client = await self.manager.get_client()
-        items = await _retry_with_backoff(client.search_knowledge_bases())
+        items = await _retry_with_backoff(lambda: client.search_knowledge_bases())
         if not items:
             return event.plain_result("IMA 账号下暂无知识库")
         lines = ["IMA 可订阅知识库："]
@@ -393,7 +469,7 @@ class KBridge(Star):
                     target = rest[pos + 1]
             key = rest[1]
             client = await self.manager.get_client()
-            items = await _retry_with_backoff(client.search_knowledge_bases(key))
+            items = await _retry_with_backoff(lambda: client.search_knowledge_bases(key))
             if not items:
                 return event.plain_result(f"未找到知识库: {key}")
             matched = next((it for it in items if it.get("id") == key or it.get("name") == key), items[0])

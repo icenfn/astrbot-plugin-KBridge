@@ -2,10 +2,15 @@ const bridge = window.AstrBotPluginPage;
 const $ = (id) => document.getElementById(id);
 
 let pollTimer = null;
+let logTimer = null;
 let stats = null;
 let platformConfig = null;
 let kbsCache = [];
 let activeView = "overview";
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
 
 const VIEW_TITLES = {
   overview: "总览",
@@ -265,9 +270,9 @@ function renderSubs() {
         <select class="input grow" id="sub-kb">
           ${sel || '<option value="">加载 IMA 知识库…</option>'}
         </select>
-        <input class="input" id="sub-target" type="text" placeholder="目标 AstrBot 知识库名（留空自动）" />
         <button class="btn primary" data-action="add-sub">${ICONS.plus}添加</button>
       </div>
+      <p class="add-hint dim">添加后自动创建 AstrBot 知识库（前缀 ${esc(stats?.target_prefix || "ima-")}），无需手动指定目标库名</p>
     </div>
     ${subListHtml}`;
 
@@ -287,10 +292,8 @@ function renderSubs() {
         kb_id: kbId,
         kb_name: kbName,
         platform,
-        target_kb: $("sub-target").value.trim(),
       });
       toast(`已添加订阅：${r.sub.kb_name}`);
-      $("sub-target").value = "";
       await refresh();
     } catch (e) {
       toast(e.message, false);
@@ -361,6 +364,15 @@ function renderSchedule() {
         <button class="btn primary" data-action="save-cron">保存设置</button>
       </div>
       <p class="schedule-hint">当前状态：<b>${on ? `每 ${stats.cron_interval} 分钟自动同步` : "已关闭"}</b></p>
+    </div>
+    <div class="log-card">
+      <div class="log-head">
+        <span>同步日志</span>
+        <button class="btn small" data-action="reload-logs">${ICONS.sync}刷新</button>
+      </div>
+      <div class="log-list" id="log-list">
+        <div class="log-empty dim">加载中…</div>
+      </div>
     </div>`;
   const save = root.querySelector("[data-action=save-cron]");
   save.onclick = async () => {
@@ -376,6 +388,28 @@ function renderSchedule() {
       toast(e.message, false);
     }
   };
+  root.querySelector("[data-action=reload-logs]").onclick = loadLogs;
+}
+
+async function loadLogs() {
+  const list = document.getElementById("log-list");
+  if (!list) return;
+  try {
+    const r = await bridge.apiGet("logs");
+    if (!r.items || !r.items.length) {
+      list.innerHTML = `<div class="log-empty dim">暂无 KBridge 日志 · 触发一次同步后这里会显示同步过程与结果</div>`;
+      return;
+    }
+    list.innerHTML = r.items
+      .map((it) => {
+        const lv = it.level || "INFO";
+        const cls = lv === "ERRO" || lv === "ERROR" ? "err" : lv === "WARN" || lv === "WARNING" ? "warn" : lv === "DBUG" || lv === "DEBUG" ? "dbg" : "";
+        return `<div class="log-line ${cls}"><span class="log-time">${it.time || ""}</span><span class="log-lv">${esc(lv)}</span><span class="log-msg">${esc(it.message || "")}</span></div>`;
+      })
+      .join("");
+  } catch {
+    /* 静默 */
+  }
 }
 
 // ---------- 操作 ----------
@@ -441,6 +475,16 @@ function switchView(view) {
   document.querySelectorAll(".nav-item, .tab-item").forEach((el) => {
     el.classList.toggle("active", el.dataset.view === view);
   });
+  // 定时任务视图：进入即加载日志并 5s 轮询，离开停止
+  if (view === "schedule") {
+    if (!logTimer) {
+      loadLogs();
+      logTimer = setInterval(loadLogs, 5000);
+    }
+  } else if (logTimer) {
+    clearInterval(logTimer);
+    logTimer = null;
+  }
   renderCurrentView();
 }
 
