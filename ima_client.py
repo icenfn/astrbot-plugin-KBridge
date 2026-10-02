@@ -17,9 +17,11 @@ logger = logging.getLogger("astrbot")
 BASE_URL = "https://ima.qq.com"
 BASE_PATH = "/openapi/wiki/v1"
 
-# 可重试错误码
-RETRYABLE_CODES = {110010, 110021}
-# HTTP 层限流/服务端错误也重试（指数退避）
+# 可重试错误码（指数退避）：110010/110021 业务重试，200001 频率超限
+RETRYABLE_CODES = {110010, 110021, 200001}
+# 无权限读取（订阅知识库文件需 ima 客户端授权），不可重试
+PERMISSION_CODES = {220030}
+# HTTP 层限流/服务端错误也重试
 RETRYABLE_HTTP = {403, 429, 500, 502, 503, 504}
 # 官方 skill 版本（随 ima-skills 包更新）
 SKILL_VERSION = "1.1.10"
@@ -122,13 +124,6 @@ class IMAClient:
             if len(items) >= 200:
                 break
         return items
-
-    async def get_knowledge_bases(self, ids: list[str]) -> dict[str, dict[str, Any]]:
-        """获取知识库信息映射（id -> info）。"""
-        if not ids:
-            return {}
-        data = await self.post("get_knowledge_base", {"ids": ids})
-        return data.get("infos", {}) or {}
 
     async def list_kb_items(
         self,

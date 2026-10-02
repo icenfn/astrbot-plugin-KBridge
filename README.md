@@ -25,11 +25,12 @@
 
 插件自带管理页面（AstrBot Plugin Pages）：在 WebUI 插件详情页打开 **KBridge 管理**（`pages/dashboard`）。支持：
 
-- 平台配置：页面内填写各平台凭据（当前 ima 的 Client ID / API Key），多平台架构预留 Obsidian / GitHub Repository / Open Notebook / url2kb
-- 状态总览：IMA 连接、订阅数、已同步文档数、定时任务状态
-- 添加订阅：下拉选择 IMA 知识库，指定目标 AstrBot 知识库名（留空自动创建）
+- 平台配置：页面内填写各平台凭据（当前 ima 的 Client ID / API Key），多平台架构预留 GitHub Repository / Open Notebook / url2kb
+- 状态总览：平台配置、订阅数、已同步文档数、定时任务状态
+- 添加订阅：下拉选择 IMA 知识库，目标 AstrBot 知识库自动创建（前缀 `ima-`）
 - 订阅管理：单个同步 / 删除，状态与错误信息展示
 - 定时同步：开关 + 间隔设置
+- 同步日志：定时任务页内嵌日志面板（自动刷新 + ERROR/WARN 高亮）
 - 同步进度：后台执行 + 自动轮询刷新
 
 ## 命令
@@ -56,12 +57,12 @@
 - 仅同步知识库根目录，子文件夹暂未递归（后续版本）
 - ima 笔记（media_type=11）暂不导入
 - 依赖 AstrBot 已配置 Embedding 模型方可自动建库
-- IMA 接口为个人账号授权，受频控限制（约 20 次/秒），并发默认 3
+- **ima 权限限制**：通过 OpenAPI 读取**订阅的知识库**文件受 ima 授权限制（code=220030），需在 ima 客户端授权，或使用你自己创建的知识库
+- **ima 频控极严**：`get_media_info` 高频调用会触发频率超限（code=200001 / HTTP 403），同步按条低频串行调用并自动退避重试
 
 ## TODO：待支持的知识库平台
 
 - [x] **ima** — 已支持（订阅同步 + 管理页面）
-- [ ] **Obsidian** — 本地 vault 导入/监听同步
 - [ ] **GitHub Repository** — 仓库文件（含 README/文档目录）订阅同步
 - [ ] **Open Notebook** — NotebookLM 开放笔记本导入
 - [ ] **url2kb** — URL 批量转知识库（网页链接直接入库）

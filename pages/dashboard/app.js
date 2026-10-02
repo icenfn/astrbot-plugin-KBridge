@@ -426,7 +426,6 @@ async function triggerSync(index = null) {
 }
 
 async function removeSub(index) {
-  if (!confirm("确认删除该订阅？已同步的文档不会被删除。")) return;
   try {
     const r = await bridge.apiPost(`subs/${index}/remove`, {});
     toast(`已删除订阅：${r.name}`);

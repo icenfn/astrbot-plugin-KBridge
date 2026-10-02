@@ -276,8 +276,10 @@ class SyncManager:
 
             # 2. 逐个条目增量同步（并发受限）
             sem = self._semaphore()
+            perm_warned = False  # 权限类错误只提示一次
 
             async def process(item: dict[str, Any]) -> None:
+                nonlocal perm_warned
                 media_id = str(item.get("media_id") or "")
                 if not media_id or media_id in kb_index:
                     result.skipped += 1
@@ -289,6 +291,15 @@ class SyncManager:
                 except IMAError as e:
                     if e.code == 110020:
                         result.skipped += 1  # 安全打击/内容违规，跳过
+                    elif e.code == 220030:
+                        # 订阅知识库文件无权限（需 ima 客户端授权），记一次说明后跳过
+                        result.skipped += 1
+                        if not perm_warned:
+                            perm_warned = True
+                            result.errors.append(
+                                "IMA 无权限读取订阅知识库文件（code=220030）："
+                                "请在 ima 客户端授权，或改用你自己创建的知识库"
+                            )
                     else:
                         result.failed += 1
                         result.errors.append(f"{item.get('title', media_id)}: {e.msg}")
@@ -302,7 +313,10 @@ class SyncManager:
             await self._save_index()
             sub.synced_count += result.synced
             sub.last_sync_at = time.strftime("%Y-%m-%d %H:%M:%S")
-            sub.last_status = "ok" if result.failed == 0 else "partial"
+            if result.failed > 0 or (result.synced == 0 and result.errors):
+                sub.last_status = "partial"
+            else:
+                sub.last_status = "ok"
             sub.last_error = "; ".join(result.errors[:5])
             await self._flush_sub(sub)
             self.logger.info(
@@ -343,8 +357,9 @@ class SyncManager:
         self, kb, kb_name: str, sub: Subscription, media_id: str, item: dict, kb_index: dict
     ) -> None:
         client = await self.get_client()
-        # 轻节流：降低连续调用触发 IMA 网关限流（HTTP 403/429）的概率
-        await asyncio.sleep(0.05)
+        # 节流：IMA get_media_info 频控极严（实测单次即可触发 200001 频率超限），
+        # 必须低频调用，降低触发 403/200001 概率
+        await asyncio.sleep(1.0)
         info = await _retry_with_backoff(lambda: client.get_media_info(media_id))
         media_type = int(info.get("media_type") or 0)
         title = str(item.get("title") or media_id)

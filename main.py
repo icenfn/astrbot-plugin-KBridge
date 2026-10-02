@@ -31,7 +31,7 @@ from astrbot.api.all import (
 from astrbot.api.web import error_response, json_response, request
 
 from .ima_client import IMAError, _retry_with_backoff
-from .sync_manager import KV_SUBS, SyncManager
+from .sync_manager import SyncManager
 
 logger = logging.getLogger("astrbot")
 
@@ -186,7 +186,6 @@ class KBridge(Star):
                             {"key": "ima_api_key", "label": "API Key", "secret": True},
                         ],
                     },
-                    "obsidian": {"name": "Obsidian", "supported": False},
                     "github": {"name": "GitHub Repository", "supported": False},
                     "notebook": {"name": "Open Notebook", "supported": False},
                     "url2kb": {"name": "url2kb", "supported": False},
