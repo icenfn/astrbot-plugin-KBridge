@@ -17,7 +17,7 @@ from typing import Any
 
 import aiohttp
 
-from ima_client import IMAClient, IMAError, _retry_with_backoff
+from .ima_client import IMAClient, IMAError, _retry_with_backoff
 
 logger = logging.getLogger("astrbot")
 

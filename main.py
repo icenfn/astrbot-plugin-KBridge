@@ -25,8 +25,8 @@ from astrbot.api.all import (
     register,
 )
 
-from ima_client import IMAError, _retry_with_backoff
-from sync_manager import KV_SUBS, SyncManager
+from .ima_client import IMAError, _retry_with_backoff
+from .sync_manager import KV_SUBS, SyncManager
 
 logger = logging.getLogger("astrbot")
 
