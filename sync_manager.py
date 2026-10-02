@@ -104,9 +104,13 @@ def _ext_from_url(url: str, media_type: int) -> str | None:
 
 
 class SyncManager:
-    def __init__(self, context, config):
+    """订阅管理与同步核心。star 为插件实例（提供 KV 存储与专属 logger）。"""
+
+    def __init__(self, star, context, config):
+        self.star = star
         self.context = context
         self.config = config
+        self.logger = getattr(star, "logger", logger)
         self._client: IMAClient | None = None
         self._index_cache: dict[str, dict[str, Any]] | None = None
         self._sem: asyncio.Semaphore | None = None
@@ -139,19 +143,19 @@ class SyncManager:
         self._client = None
 
     async def get_subs(self) -> list[Subscription]:
-        raw = await self.context.get_kv_data(KV_SUBS, [])
+        raw = await self.star.get_kv_data(KV_SUBS, [])
         return [Subscription.from_dict(d) for d in raw]
 
     async def _save_subs(self, subs: list[Subscription]) -> None:
-        await self.context.put_kv_data(KV_SUBS, [s.to_dict() for s in subs])
+        await self.star.put_kv_data(KV_SUBS, [s.to_dict() for s in subs])
 
     async def _get_index(self) -> dict[str, dict[str, Any]]:
         if self._index_cache is None:
-            self._index_cache = await self.context.get_kv_data(KV_INDEX, {}) or {}
+            self._index_cache = await self.star.get_kv_data(KV_INDEX, {}) or {}
         return self._index_cache
 
     async def _save_index(self) -> None:
-        await self.context.put_kv_data(KV_INDEX, self._index_cache)
+        await self.star.put_kv_data(KV_INDEX, self._index_cache)
 
     def _semaphore(self) -> asyncio.Semaphore:
         if self._sem is None:
@@ -169,7 +173,7 @@ class SyncManager:
         sub = Subscription(kb_id=kb_id, kb_name=kb_name, target_kb=target_kb)
         subs.append(sub)
         await self._save_subs(subs)
-        logger.info(f"[KBridge] 添加订阅: {kb_name} ({kb_id}) -> {target_kb or '自动创建'}")
+        self.logger.info(f"[KBridge] 添加订阅: {kb_name} ({kb_id}) -> {target_kb or '自动创建'}")
         return sub
 
     async def remove_subscription(self, index: int) -> Subscription:
@@ -181,7 +185,7 @@ class SyncManager:
         index_data = await self._get_index()
         index_data.pop(sub.kb_id, None)
         await self._save_index()
-        logger.info(f"[KBridge] 删除订阅: {sub.kb_name} ({sub.kb_id})")
+        self.logger.info(f"[KBridge] 删除订阅: {sub.kb_name} ({sub.kb_id})")
         return sub
 
     async def resolve_target_kb(self, sub: Subscription):
@@ -218,7 +222,7 @@ class SyncManager:
 
     async def sync_subscription(self, sub: Subscription) -> SyncResult:
         result = SyncResult(kb_id=sub.kb_id)
-        logger.info(f"[KBridge] 开始同步订阅: {sub.kb_name} ({sub.kb_id})")
+        self.logger.info(f"[KBridge] 开始同步订阅: {sub.kb_name} ({sub.kb_id})")
         try:
             client = await self.get_client()
             kb, kb_name = await self.resolve_target_kb(sub)
@@ -257,7 +261,7 @@ class SyncManager:
                         result.failed += 1
                         result.errors.append(f"{item.get('title', media_id)}: {e.msg}")
                 except Exception as e:  # noqa: BLE001
-                    logger.exception(f"同步条目失败 {media_id}")
+                    self.logger.exception(f"同步条目失败 {media_id}")
                     result.failed += 1
                     result.errors.append(f"{item.get('title', media_id)}: {e}")
 
@@ -269,13 +273,13 @@ class SyncManager:
             sub.last_status = "ok" if result.failed == 0 else "partial"
             sub.last_error = "; ".join(result.errors[:5])
             await self._flush_sub(sub)
-            logger.info(
+            self.logger.info(
                 f"[KBridge] 同步完成 {sub.kb_name}: 共 {result.total} 条, "
                 f"新增 {result.synced}, 跳过 {result.skipped}, 失败 {result.failed}"
             )
             return result
         except Exception as e:  # noqa: BLE001
-            logger.exception(f"同步订阅失败 {sub.kb_id}")
+            self.logger.exception(f"同步订阅失败 {sub.kb_id}")
             sub.last_status = "error"
             sub.last_error = str(e)
             await self._flush_sub(sub)

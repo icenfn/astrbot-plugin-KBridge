@@ -44,13 +44,15 @@ def webapi_handler(func):
         try:
             return await func(self, *args, **kwargs)
         except IMAError as e:
-            logger.warning(f"[KBridge] API {func.__name__} IMA 错误: code={e.code} msg={e.msg}")
+            self.logger.warning(f"API {func.__name__} IMA 错误: code={e.code} msg={e.msg}")
             return error_response(f"IMA 错误: {e.msg}", status_code=400)
         except Exception:  # noqa: BLE001
-            logger.exception(f"[KBridge] API {func.__name__} 未捕获异常")
+            self.logger.exception(f"API {func.__name__} 未捕获异常")
             return error_response("内部错误，详见 AstrBot 日志", status_code=500)
 
     return wrapper
+
+
 HELP_TEXT = """KBridge - 外部知识源订阅同步
 
 /kbridge kbs                   列出 IMA 知识库
@@ -67,7 +69,7 @@ class KBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        self.manager = SyncManager(context, config)
+        self.manager = SyncManager(self, context, config)
         self._cron_job_id: str | None = None
         self._cron_initialized = False
         self._register_web_apis()
@@ -160,7 +162,7 @@ class KBridge(Star):
         if "sync_interval_minutes" in saved:
             minutes = int(self.config.get("sync_interval_minutes", 0) or 0)
             await self._set_cron(minutes > 0, minutes if minutes > 0 else None)
-        logger.info(f"[KBridge] 页面保存平台配置成功: {saved}")
+        self.logger.info(f"[KBridge] 页面保存平台配置成功: {saved}")
         return json_response({"saved": saved})
 
     @webapi_handler
@@ -255,7 +257,7 @@ class KBridge(Star):
     async def api_kbs(self):
         client = await self.manager.get_client()
         items = await _retry_with_backoff(client.search_knowledge_bases())
-        logger.info(f"[KBridge] 查询 IMA 知识库列表: {len(items)} 个")
+        self.logger.info(f"[KBridge] 查询 IMA 知识库列表: {len(items)} 个")
         return json_response(items)
 
     async def _bg_sync(self, index: int | None) -> None:
@@ -268,7 +270,7 @@ class KBridge(Star):
                 if 0 <= index < len(subs):
                     await self.manager.sync_subscription(subs[index])
         except Exception:  # noqa: BLE001
-            logger.exception("KBridge 页面触发同步失败")
+            self.logger.exception("KBridge 页面触发同步失败")
 
     # ---------- 生命周期 ----------
 
@@ -277,7 +279,7 @@ class KBridge(Star):
             await self._sync_cron_job()
             self._cron_initialized = True
         except Exception:  # noqa: BLE001
-            logger.exception("KBridge 初始化定时任务失败")
+            self.logger.exception("KBridge 初始化定时任务失败")
 
     async def terminate(self) -> None:
         await self.manager.close()
@@ -285,15 +287,15 @@ class KBridge(Star):
     # ---------- 定时同步 ----------
 
     async def _auto_sync(self) -> None:
-        logger.info("KBridge 定时同步开始")
+        self.logger.info("KBridge 定时同步开始")
         try:
             results = await self.manager.sync_all()
             for r in results:
-                logger.info(
+                self.logger.info(
                     f"KBridge 同步 {r.kb_id}: 新增 {r.synced}, 跳过 {r.skipped}, 失败 {r.failed}"
                 )
         except Exception:  # noqa: BLE001
-            logger.exception("KBridge 定时同步失败")
+            self.logger.exception("KBridge 定时同步失败")
 
     async def _sync_cron_job(self) -> None:
         """根据配置 sync_interval_minutes 同步定时任务状态。"""
@@ -301,7 +303,7 @@ class KBridge(Star):
         try:
             await self._set_cron(minutes > 0, minutes if minutes > 0 else None)
         except Exception:  # noqa: BLE001
-            logger.exception("KBridge 初始化定时任务失败")
+            self.logger.exception("KBridge 初始化定时任务失败")
 
     # ---------- 命令 ----------
 
@@ -333,7 +335,7 @@ class KBridge(Star):
         except ValueError as e:
             yield event.plain_result(f"参数错误: {e}")
         except Exception as e:  # noqa: BLE001
-            logger.exception("KBridge 命令执行失败")
+            self.logger.exception("KBridge 命令执行失败")
             yield event.plain_result(f"执行失败: {e}")
 
     async def _cmd_kbs(self, event: AstrMessageEvent):
@@ -424,7 +426,7 @@ class KBridge(Star):
                         self._cron_job_id = None
                     await cron_mgr.delete_job(job.job_id)
         except Exception:  # noqa: BLE001
-            logger.warning("KBridge 清理定时任务失败", exc_info=True)
+            self.logger.warning("KBridge 清理定时任务失败", exc_info=True)
         if not on:
             self._cron_job_id = None
             return "已关闭定时同步", False
