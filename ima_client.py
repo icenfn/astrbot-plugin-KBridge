@@ -75,10 +75,32 @@ class IMAClient:
 
     # ---------- 知识库 ----------
 
+    # ---------- 知识库 ----------
+
+    @staticmethod
+    def _normalize_kb(item: dict[str, Any]) -> dict[str, Any]:
+        """兼容 IMA 返回字段名差异，归一化为统一的 id/name 字段（含嵌套结构）。"""
+        if not isinstance(item, dict):
+            return item
+        item = dict(item)
+        for nest_key in ("info", "knowledge_base", "kb"):
+            if isinstance(item.get(nest_key), dict) and not item.get("id") and not item.get("name"):
+                item = dict(item[nest_key])
+                break
+        for key in ("id", "knowledge_base_id", "info_id", "kb_id", "media_id"):
+            if item.get(key):
+                item["id"] = item[key]
+                break
+        for key in ("name", "knowledge_base_name", "kb_name", "title"):
+            if item.get(key):
+                item["name"] = item[key]
+                break
+        return item
+
     async def search_knowledge_bases(
         self, query: str = "", cursor: str = "", limit: int = 20
     ) -> list[dict[str, Any]]:
-        """搜索知识库列表（query 为空返回全部）。"""
+        """搜索知识库列表（query 为空返回全部）。条目已归一化为统一的 {id, name}。"""
         items: list[dict[str, Any]] = []
         cur = cursor
         while True:
@@ -86,7 +108,7 @@ class IMAClient:
                 "search_knowledge_base",
                 {"query": query, "cursor": cur, "limit": min(limit, 20)},
             )
-            items.extend(data.get("info_list", []))
+            items.extend(self._normalize_kb(it) for it in (data.get("info_list", []) or []))
             if data.get("is_end") or not data.get("next_cursor"):
                 break
             cur = data["next_cursor"]

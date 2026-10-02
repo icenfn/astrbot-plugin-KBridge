@@ -212,7 +212,8 @@ function renderSubs() {
     root.innerHTML = `<div class="loading"><span class="spinner lg"></span>加载中…</div>`;
     return;
   }
-  const sel = kbsCache.map((k) => `<option value="${k.id}">${k.name || k.id}</option>`).join("");
+  const kbName = (k) => k.name || k.kb_name || k.title || k.id || "未命名";
+  const sel = kbsCache.map((k) => `<option value="${k.id}">${kbName(k)}</option>`).join("");
   root.innerHTML = `
     <div class="add-panel">
       <div class="add-row">
