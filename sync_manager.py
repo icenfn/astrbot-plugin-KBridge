@@ -277,6 +277,7 @@ class SyncManager:
             # 2. 逐个条目增量同步（并发受限）
             sem = self._semaphore()
             perm_warned = False  # 权限类错误只提示一次
+            skip_counts: dict[str, int] = {}  # 跳过原因统计
 
             async def process(item: dict[str, Any]) -> None:
                 nonlocal perm_warned
@@ -286,8 +287,12 @@ class SyncManager:
                     return
                 try:
                     async with sem:
-                        await self._process_item(kb, kb_name, sub, media_id, item, kb_index)
-                    result.synced += 1
+                        status = await self._process_item(kb, kb_name, sub, media_id, item, kb_index)
+                    if status == "ok":
+                        result.synced += 1
+                    else:
+                        result.skipped += 1
+                        skip_counts[status] = skip_counts.get(status, 0) + 1
                 except IMAError as e:
                     if e.code == 110020:
                         result.skipped += 1  # 安全打击/内容违规，跳过
@@ -313,15 +318,26 @@ class SyncManager:
             await self._save_index()
             sub.synced_count += result.synced
             sub.last_sync_at = time.strftime("%Y-%m-%d %H:%M:%S")
-            if result.failed > 0 or (result.synced == 0 and result.errors):
+            # 全部条目被跳过（未真正入库）也视为 partial，避免误报成功
+            if result.failed > 0 or (result.total > 0 and result.synced == 0):
                 sub.last_status = "partial"
             else:
                 sub.last_status = "ok"
             sub.last_error = "; ".join(result.errors[:5])
+            if skip_counts and not sub.last_error:
+                sub.last_error = "跳过原因: " + ", ".join(
+                    f"{k}×{v}" for k, v in sorted(skip_counts.items())
+                )
             await self._flush_sub(sub)
+            skip_detail = ""
+            if skip_counts:
+                skip_detail = " | 跳过原因: " + ", ".join(
+                    f"{k}×{v}" for k, v in sorted(skip_counts.items())
+                )
             self.logger.info(
                 f"[KBridge] 同步完成 {sub.kb_name}: 共 {result.total} 条, "
                 f"新增 {result.synced}, 跳过 {result.skipped}, 失败 {result.failed}"
+                f"{skip_detail}"
             )
             return result
         except Exception as e:  # noqa: BLE001
@@ -355,7 +371,11 @@ class SyncManager:
 
     async def _process_item(
         self, kb, kb_name: str, sub: Subscription, media_id: str, item: dict, kb_index: dict
-    ) -> None:
+    ) -> str:
+        """处理单条媒体。返回状态：ok（已入库）/ 跳过原因字符串。
+
+        注意：跳过分支必须返回原因，不得静默返回——调用方据此统计 synced/skipped。
+        """
         client = await self.get_client()
         # 节流：IMA get_media_info 频控极严（实测单次即可触发 200001 频率超限），
         # 必须低频调用，降低触发 403/200001 概率
@@ -367,13 +387,13 @@ class SyncManager:
         # 笔记/AI 会话：暂不支持，跳过并记录
         if media_type in NOTE_MEDIA_TYPES or info.get("notebook_ext_info"):
             kb_index[media_id] = {"doc_id": "", "title": title, "skipped": "note"}
-            return
+            return "note"
 
         url_info = info.get("url_info") or {}
         url = url_info.get("url") or ""
         if not url:
             kb_index[media_id] = {"doc_id": "", "title": title, "skipped": "no-url"}
-            return
+            return "no-url"
 
         headers = url_info.get("headers") or {}
         content, content_type, final_url = await self._download(url, headers)
@@ -385,14 +405,14 @@ class SyncManager:
                 ext = "md"
             else:
                 kb_index[media_id] = {"doc_id": "", "title": title, "skipped": "unsupported"}
-                return
+                return "unsupported"
 
         file_name = f"{_sanitize_filename(title)}.{ext}"
         if ext == "md":
             text = _html_to_markdown(content.decode("utf-8", errors="ignore"))
             if not text.strip():
                 kb_index[media_id] = {"doc_id": "", "title": title, "skipped": "empty"}
-                return
+                return "empty"
             payload = text.encode("utf-8")
         else:
             payload = content
@@ -407,6 +427,7 @@ class SyncManager:
             "title": title,
             "at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
+        return "ok"
 
     async def _download(
         self, url: str, headers: dict[str, str]
