@@ -295,6 +295,8 @@ function renderSubs() {
     const label = platformConfig?.platforms?.[e.platform]?.name || e.platform || "";
     html += `<div class="notice warn">${esc(label)}：${esc(e.message)}</div>`;
   });
+  // GitHub 分组始终渲染（提供仓库 URL 添加入口，即使暂无已添加仓库）
+  if (!groups.has("github")) groups.set("github", []);
   groups.forEach((subs, g) => {
     const label = platformConfig?.platforms?.[g]?.name || g;
     const addPanel = g === "github"
@@ -305,14 +307,17 @@ function renderSubs() {
           </div>
           <p class="add-hint dim">支持整个仓库或 tree 子目录；仅导入 AstrBot 可解析格式（md/txt/pdf/docx/xlsx/epub 等）</p>
         </div>` : "";
+    const subListHtml = subs.length
+      ? subs.map((s) => subCard(s)).join("")
+      : `<div class="empty-state small">暂无已添加仓库</div>`;
     html += `
       <div class="sub-group">
         <div class="sub-group-title">${label}<span class="dim"> · ${subs.length}</span></div>
         ${addPanel}
-        <div class="sub-list">${subs.map((s) => subCard(s)).join("")}</div>
+        <div class="sub-list">${subListHtml}</div>
       </div>`;
   });
-  if (!items.length && !errs.length) {
+  if (!html) {
     html = `<div class="empty-state">暂无同步源 · 先到「平台配置」填写凭据</div>`;
   }
   root.innerHTML = html;
