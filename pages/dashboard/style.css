@@ -492,18 +492,17 @@ svg { width: 18px; height: 18px; flex: none; }
 .sub-line1 { display: flex; align-items: center; gap: 8px; }
 .sub-line2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; }
 .sub-line2 .sep { color: var(--border); }
-.sub-line2 .miss-hint { color: var(--danger); font-weight: 600; }
 
-/* 定时同步开关（卡片内） */
+/* 定时同步开关（与同步按钮同一行） */
 .sub-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  margin-left: auto;
+  gap: 4px;
   font-size: 12px;
   color: var(--dim);
   cursor: pointer;
   user-select: none;
+  white-space: nowrap;
 }
 .sub-toggle input {
   width: 14px;
@@ -512,7 +511,7 @@ svg { width: 18px; height: 18px; flex: none; }
   cursor: pointer;
 }
 .sub-line2 .dim { color: var(--dim); }
-.sub-ops { display: flex; gap: 6px; flex: none; }
+.sub-ops { display: flex; align-items: center; gap: 8px; flex: none; }
 .empty-state {
   text-align: center;
   color: var(--dim);

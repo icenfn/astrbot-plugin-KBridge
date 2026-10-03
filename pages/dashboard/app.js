@@ -199,24 +199,10 @@ async function openPlatformConfig(id) {
     toast(`${p.name} 即将支持`, "warn");
     return;
   }
-  // GitHub 平台配置：除凭据外，还内嵌仓库 URL 管理（添加/删除/列表）
-  let ghRepos = [];
-  if (id === "github") {
-    try {
-      const r = await bridge.apiGet("subs");
-      ghRepos = (r || []).filter((s) => s.platform === "github" && !s.error);
-    } catch { /* 忽略，仓库区保持空 */ }
-  }
   const ghBlock = id === "github"
     ? `<div class="gh-section">
-        <div class="gh-head">已添加仓库<span class="dim"> · ${ghRepos.length}</span></div>
-        <div class="gh-list">
-          ${ghRepos.length ? ghRepos.map((s) => `
-            <div class="gh-row">
-              <span class="gh-name" title="${esc(s.kb_id)}">${esc(s.display_name || s.kb_name)}</span>
-              <button class="btn small danger" data-rm="${esc(s.kb_id)}">${ICONS.trash}</button>
-            </div>`).join("") : `<div class="empty-state small">暂无仓库</div>`}
-        </div>
+        <div class="gh-head">已添加仓库<span class="dim"> · 0</span></div>
+        <div class="gh-list"><div class="empty-state small">加载中…</div></div>
         <div class="add-row">
           <input class="input grow" id="gh-url" placeholder="https://github.com/owner/repo 或 /tree/branch/path" />
           <button class="btn primary" data-action="add-gh">${ICONS.plus}添加仓库</button>
@@ -242,6 +228,37 @@ async function openPlatformConfig(id) {
       ${ghBlock}
       <button class="btn primary" id="pf-save">保存配置</button>`,
     onMount: (body, close) => {
+      const ghList = body.querySelector(".gh-list");
+      const ghHead = body.querySelector(".gh-head .dim");
+      const renderGhList = async () => {
+        try {
+          const r = await bridge.apiGet("subs");
+          const repos = (r || []).filter((x) => x.platform === "github" && !x.error);
+          if (ghHead) ghHead.textContent = ` · ${repos.length}`;
+          ghList.innerHTML = repos.length
+            ? repos.map((s) => `
+                <div class="gh-row">
+                  <span class="gh-name" title="${esc(s.kb_id)}">${esc(s.display_name || s.kb_name)}</span>
+                  <button class="btn small danger" data-rm="${esc(s.kb_id)}">${ICONS.trash}</button>
+                </div>`).join("")
+            : `<div class="empty-state small">暂无仓库</div>`;
+          ghList.querySelectorAll("[data-rm]").forEach((b) => {
+            b.addEventListener("click", () => rmRepo(b.dataset.rm));
+          });
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      };
+      const rmRepo = async (kbId) => {
+        try {
+          const r = await bridge.apiPost("subs/remove", { kb_id: kbId, platform: "github" });
+          toast(`已删除仓库：${r.name}`, "success");
+          await renderGhList();
+          await refresh();
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      };
       const addGh = async () => {
         const url = body.querySelector("#gh-url")?.value?.trim();
         if (!url) {
@@ -251,27 +268,16 @@ async function openPlatformConfig(id) {
         try {
           const r = await bridge.apiPost("subs/add", { url, platform: "github" });
           toast(r.exists ? `已在同步列表：${r.sub.kb_name}` : `已添加仓库：${r.sub.kb_name}`, r.exists ? "warn" : "success");
+          body.querySelector("#gh-url").value = "";
+          await renderGhList();
           await refresh();
-          close();
-          openPlatformConfig("github");
-        } catch (e) {
-          toast(e.message, "error");
-        }
-      };
-      const rmRepo = async (kbId) => {
-        try {
-          const r = await bridge.apiPost("subs/remove", { kb_id: kbId, platform: "github" });
-          toast(`已删除仓库：${r.name}`, "success");
-          await refresh();
-          close();
-          openPlatformConfig("github");
         } catch (e) {
           toast(e.message, "error");
         }
       };
       body.querySelector("[data-action=add-gh]")?.addEventListener("click", addGh);
       body.querySelector("#gh-url")?.addEventListener("keydown", (e) => { if (e.key === "Enter") addGh(); });
-      body.querySelectorAll("[data-rm]").forEach((b) => b.addEventListener("click", () => rmRepo(b.dataset.rm)));
+      if (ghList) renderGhList();
       body.querySelector("#pf-save").onclick = async () => {
         const fields = {};
         body.querySelectorAll(".input[data-key]").forEach((inp) => {
@@ -299,7 +305,9 @@ async function openPlatformConfig(id) {
 }
 
 function subCard(s) {
-  // 目标 AstrBot 知识库已删除 → 显示「未同步」，同步时会自动重建
+  const cur = stats?.current;
+  const syncingThis = cur && cur.kb_id === s.kb_id;
+  const otherSyncing = (stats?.is_syncing && !syncingThis) || false;
   const missing = !!s.kb_missing;
   const statusText = missing
     ? "未同步"
@@ -307,34 +315,38 @@ function subCard(s) {
         ok: "正常",
         error: "异常",
         partial: "部分失败",
+        cancelled: "已取消",
         pending: "待同步",
       }[s.last_status] || s.last_status);
   const statusCls = missing ? "err" : s.last_status === "ok" ? "ok" : s.last_status === "error" ? "err" : "warn";
-  const statusTitle = missing ? "目标知识库已删除，同步后将自动重建" : (s.last_error || "");
+  const statusTitle = missing ? "目标知识库已删除，同步时将自动重建" : (s.last_error || "");
   const name = s.display_name || s.kb_name || s.kb_id || "未命名";
   const meta = [
     `已同步 ${s.synced_count}`,
     s.last_sync_at ? `上次 ${s.last_sync_at.slice(5, 19)}` : "",
   ].filter(Boolean);
-  const missingHint = missing ? `<span class="miss-hint">目标库已删除</span>` : "";
+  const syncBtn = syncingThis
+    ? `<button class="btn small danger" data-cancel="${esc(s.kb_id)}">${ICONS.bolt}取消 ${cur.total ? `${cur.synced}/${cur.total}` : ""}</button>`
+    : otherSyncing
+      ? `<button class="btn small" disabled>${ICONS.sync}同步中…</button>`
+      : `<button class="btn small" data-kb="${esc(s.kb_id)}" data-platform="${esc(s.platform)}">${ICONS.sync}同步</button>`;
   return `
     <div class="sub-card">
       <div class="sub-main">
         <div class="sub-line1">
           <span class="sub-name">${esc(name)}</span>
           <span class="badge ${statusCls}" title="${esc(statusTitle)}">${statusText}</span>
-          <label class="sub-toggle" title="定时同步开关">
-            <input type="checkbox" data-tgl="${esc(s.kb_id)}" data-platform="${esc(s.platform)}" ${s.enabled ? "checked" : ""} />
-            <span>定时</span>
-          </label>
         </div>
         <div class="sub-line2">
-          ${missingHint}
           ${meta.map((x) => `<span class="dim">${x}</span>`).join('<span class="sep">·</span>')}
         </div>
       </div>
       <div class="sub-ops">
-        <button class="btn small" data-kb="${esc(s.kb_id)}" data-platform="${esc(s.platform)}">${ICONS.sync}同步</button>
+        <label class="sub-toggle" title="定时同步开关">
+          <input type="checkbox" data-tgl="${esc(s.kb_id)}" data-platform="${esc(s.platform)}" ${s.enabled ? "checked" : ""} />
+          <span>定时</span>
+        </label>
+        ${syncBtn}
       </div>
     </div>`;
 }
@@ -380,6 +392,17 @@ function renderSubs() {
   root.querySelectorAll("[data-kb]").forEach((b) => {
     b.onclick = () => triggerSync(b.dataset.kb, b.dataset.platform || "ima");
   });
+  root.querySelectorAll("[data-cancel]").forEach((b) => {
+    b.onclick = async () => {
+      try {
+        const r = await bridge.apiPost("sync/cancel", { kb_id: b.dataset.cancel });
+        toast(r.cancelled ? "正在取消同步…（已同步部分保留）" : r.message || "同步已结束", r.cancelled ? "warn" : "ok");
+        await refresh();
+      } catch (e) {
+        toast(e.message, "error");
+      }
+    };
+  });
   root.querySelectorAll("[data-tgl]").forEach((t) => {
     t.onchange = async () => {
       try {
@@ -417,6 +440,8 @@ function startPoll() {
     try {
       const s = await loadStats();
       renderOverview();
+      const view = $("view-subs");
+      if (view._subs) renderSubs(); // 同步中实时刷新按钮/进度
       if (!s.is_syncing) {
         clearInterval(pollTimer);
         pollTimer = null;

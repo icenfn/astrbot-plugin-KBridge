@@ -174,6 +174,7 @@ class KBridge(Star):
             (f"/{PLUGIN_NAME}/subs/remove", self.api_subs_remove, ["POST"], "删除同步源"),
             (f"/{PLUGIN_NAME}/subs/toggle", self.api_subs_toggle, ["POST"], "定时同步开关"),
             (f"/{PLUGIN_NAME}/sync", self.api_sync, ["POST"], "触发同步"),
+            (f"/{PLUGIN_NAME}/sync/cancel", self.api_cancel, ["POST"], "取消同步"),
             (f"/{PLUGIN_NAME}/schedule", self.api_schedule_get, ["GET"], "读取定时同步"),
             (f"/{PLUGIN_NAME}/schedule", self.api_schedule_save, ["POST"], "保存定时同步"),
             (f"/{PLUGIN_NAME}/config", self.api_config_get, ["GET"], "读取平台配置"),
@@ -282,6 +283,7 @@ class KBridge(Star):
                 "sub_count": len(subs),
                 "total_synced": sum(s.synced_count for s in subs),
                 "is_syncing": self.manager.is_syncing,
+                "current": self.manager.current_progress,
                 "configured": configured,
                 "ima_configured": configured["ima"],  # 兼容旧前端
             }
@@ -351,7 +353,10 @@ class KBridge(Star):
         url = str(payload.get("url") or "").strip()
         if not url:
             return error_response("缺少仓库 URL", status_code=400)
-        parsed = parse_github_url(url)
+        try:
+            parsed = parse_github_url(url)
+        except GitHubError as e:
+            return error_response(e.msg, status_code=400)
         key = sub_key(parsed)
         existing = await self.manager.get_sub_by_kb_id(key, "github")
         if existing is not None:
@@ -444,6 +449,7 @@ class KBridge(Star):
         payload = await request.json(default={})
         if self.manager.is_syncing:
             return error_response("已有同步任务在运行", status_code=409)
+        self.manager._cancel = False  # 新同步开始前清除取消标记
         kb_id = str(payload.get("kb_id") or "").strip()
         platform = str(payload.get("platform") or "ima").strip() or "ima"
         if kb_id:
@@ -454,6 +460,15 @@ class KBridge(Star):
         else:
             asyncio.get_running_loop().create_task(self._bg_sync(None))
         return json_response({"started": True})
+
+    @webapi_handler
+    async def api_cancel(self):
+        """取消当前进行中的同步（已入库部分保留）。"""
+        if not self.manager.is_syncing and self.manager.current_progress is None:
+            return json_response({"cancelled": False, "message": "当前没有进行中的同步"})
+        self.manager.request_cancel()
+        self.logger.info("[KBridge] 收到取消请求，正在终止同步")
+        return json_response({"cancelled": True, "message": "正在取消…"})
 
     async def _bg_sync(self, index: int | None) -> None:
         """后台同步任务（WebUI 触发，全量）。"""

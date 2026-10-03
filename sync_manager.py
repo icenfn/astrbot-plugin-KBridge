@@ -82,6 +82,10 @@ class Subscription:
         return cls(**{k: d.get(k, v) for k, v in cls.__dataclass_fields__.items() if k in d})
 
 
+class _SyncCancelled(Exception):
+    """同步被用户取消（已入库部分保留）。"""
+
+
 @dataclass
 class SyncResult:
     kb_id: str
@@ -137,10 +141,35 @@ class SyncManager:
         self._sem: asyncio.Semaphore | None = None
         self._sync_lock = asyncio.Lock()
         self._syncing = False
+        self._cancel = False
+        self._current: Subscription | None = None
+        self._current_result: SyncResult | None = None
 
     @property
     def is_syncing(self) -> bool:
         return self._syncing
+
+    @property
+    def cancel_requested(self) -> bool:
+        return self._cancel
+
+    def request_cancel(self) -> None:
+        self._cancel = True
+
+    @property
+    def current_progress(self) -> dict | None:
+        """当前同步源进度（供页面展示「同步中 x/y」），无同步时返回 None。"""
+        if self._current is None or self._current_result is None:
+            return None
+        r = self._current_result
+        return {
+            "kb_id": self._current.kb_id,
+            "name": self._current.kb_name,
+            "total": r.total,
+            "synced": r.synced,
+            "skipped": r.skipped,
+            "failed": r.failed,
+        }
 
     # ---------- 基础 ----------
 
@@ -444,6 +473,8 @@ class SyncManager:
 
     async def sync_subscription(self, sub: Subscription) -> SyncResult:
         result = SyncResult(kb_id=sub.kb_id)
+        self._current = sub
+        self._current_result = result
         self.logger.info(f"[KBridge] 开始同步: {sub.kb_name} ({sub.kb_id}) [{sub.platform}]")
         try:
             if sub.platform == "youdao":
@@ -476,6 +507,14 @@ class SyncManager:
                 f"{skip_detail}"
             )
             return result
+        except _SyncCancelled:
+            # 用户取消：已入库部分保留（index 已保存），标记取消状态
+            await self._save_index()
+            sub.last_status = "cancelled"
+            sub.last_error = "已取消（已完成部分保留）"
+            await self._flush_sub(sub)
+            self.logger.info(f"[KBridge] 同步已取消: {sub.kb_name}（已完成 {result.synced} 条）")
+            return result
         except Exception as e:  # noqa: BLE001
             # 不向上抛出：返回带 error 状态的 result，页面/定时日志可正常展示
             self.logger.exception(f"同步失败 {sub.kb_id}")
@@ -486,6 +525,10 @@ class SyncManager:
                 result.errors.append(str(e))
             await self._flush_sub(sub)
             return result
+        finally:
+            if self._current is sub:
+                self._current = None
+                self._current_result = None
 
     async def _sync_ima(self, sub: Subscription, result: SyncResult) -> None:
         """IMA 同步：递归遍历知识库（含文件夹）-> 逐个条目增量处理。"""
@@ -528,20 +571,28 @@ class SyncManager:
 
         async def process(item: dict[str, Any]) -> None:
             nonlocal perm_warned
+            if self.cancel_requested:
+                raise _SyncCancelled()
             media_id = str(item.get("media_id") or "")
             if not media_id or media_id in kb_index:
                 result.skipped += 1
                 return
             try:
                 async with sem:
+                    if self.cancel_requested:
+                        raise _SyncCancelled()
                     status = await self._process_ima_item(
                         kb, kb_name, sub, media_id, item, kb_index
                     )
+                if self.cancel_requested:
+                    raise _SyncCancelled()
                 if status == "ok":
                     result.synced += 1
                 else:
                     result.skipped += 1
                     result.skip_counts[status] = result.skip_counts.get(status, 0) + 1
+            except _SyncCancelled:
+                raise
             except IMAError as e:
                 if e.code in SKIP_CODES:
                     result.skipped += 1  # 安全打击/内容违规/笔记已删除，跳过
@@ -562,7 +613,9 @@ class SyncManager:
                 result.failed += 1
                 result.errors.append(f"{item.get('title', media_id)}: {e}")
 
-        await asyncio.gather(*(process(it) for it in items))
+        ret = await asyncio.gather(*(process(it) for it in items), return_exceptions=True)
+        if any(isinstance(x, _SyncCancelled) for x in ret):
+            raise _SyncCancelled()
         await self._save_index()
 
     async def _sync_youdao(self, sub: Subscription, result: SyncResult) -> None:
@@ -602,6 +655,8 @@ class SyncManager:
 
         # 2. 逐个笔记读取并入库（MCP 会话单连接，串行调用）
         async def process(note: dict[str, Any]) -> None:
+            if self.cancel_requested:
+                raise _SyncCancelled()
             file_id = str(note.get("id") or "")
             if not file_id:
                 result.skipped += 1
@@ -646,6 +701,8 @@ class SyncManager:
                 result.errors.append(f"{title}: {e}")
 
         for note in notes:
+            if self.cancel_requested:
+                raise _SyncCancelled()
             await process(note)
         await self._save_index()
 
@@ -685,13 +742,19 @@ class SyncManager:
         sem = self._semaphore()
 
         async def process(f: dict[str, str]) -> None:
+            if self.cancel_requested:
+                raise _SyncCancelled()
             relpath = f["path"]
             if relpath in kb_index:
                 result.skipped += 1
                 return
             try:
                 async with sem:
+                    if self.cancel_requested:
+                        raise _SyncCancelled()
                     data, ext = await client.fetch_raw(parsed, relpath)
+                if self.cancel_requested:
+                    raise _SyncCancelled()
                 if not data.strip():
                     kb_index[relpath] = {"doc_id": "", "title": relpath, "skipped": "empty"}
                     result.skipped += 1
@@ -709,6 +772,8 @@ class SyncManager:
                     "at": time.strftime("%Y-%m-%d %H:%M:%S"),
                 }
                 result.synced += 1
+            except _SyncCancelled:
+                raise
             except GitHubError as e:
                 result.failed += 1
                 result.errors.append(f"{relpath}: {e.msg}")
@@ -717,7 +782,9 @@ class SyncManager:
                 result.failed += 1
                 result.errors.append(f"{relpath}: {e}")
 
-        await asyncio.gather(*(process(f) for f in files))
+        ret = await asyncio.gather(*(process(f) for f in files), return_exceptions=True)
+        if any(isinstance(x, _SyncCancelled) for x in ret):
+            raise _SyncCancelled()
         await self._save_index()
 
     async def sync_all(self) -> list[SyncResult]:
@@ -726,10 +793,11 @@ class SyncManager:
             return []
         async with self._sync_lock:
             self._syncing = True
+            self._cancel = False
             try:
                 results: list[SyncResult] = []
                 for sub in await self.get_subs():
-                    if not sub.enabled:
+                    if not sub.enabled or self.cancel_requested:
                         continue
                     try:
                         results.append(await self.sync_subscription(sub))
