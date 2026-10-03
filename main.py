@@ -353,17 +353,24 @@ class KBridge(Star):
             row["display_name"] = s.kb_name
             out.append(row)
 
-        # 目标 AstrBot 知识库已删除时标记，页面显示「未同步」
-        async def mark_missing(row: dict) -> None:
+        # 从 AstrBot 知识库取实际文档数作为「已同步 x」（知识库被删除则标记并归零）
+        async def fill_kb_info(row: dict) -> None:
             if row.get("error"):
                 return
             name = (row.get("target_kb") or "").strip() or (row.get("kb_name") or "").strip()
             if not name:
                 return
             kb = await self.manager.context.kb_manager.get_kb_by_name(name)
-            row["kb_missing"] = kb is None
+            if kb is None:
+                row["kb_missing"] = True
+                row["synced_count"] = 0
+                return
+            try:
+                row["synced_count"] = await kb.get_document_count()
+            except Exception:  # noqa: BLE001
+                row["synced_count"] = 0
 
-        await asyncio.gather(*(mark_missing(row) for row in out))
+        await asyncio.gather(*(fill_kb_info(row) for row in out))
         return json_response(out)
 
     @webapi_handler
