@@ -1,6 +1,6 @@
 # KBridge
 
-> 同步外部知识源（腾讯 ima 知识库、有道云笔记、GitHub 仓库）到 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 知识库，支持增量同步与 WebUI 管理。
+> **astrbot 知识库同步插件，装这一个就够了！** 支持从腾讯 ima、有道云笔记、GitHub、Url 等同步，更多支持的平台正在路上…
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.16-2563eb)](https://github.com/AstrBotDevs/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)

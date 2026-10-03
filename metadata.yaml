@@ -1,8 +1,8 @@
 name: astrbot_plugin_kbridge
 display_name: KBridge
-desc: 同步外部知识源（ima 知识库、有道云笔记、GitHub 仓库）到 AstrBot 知识库，支持增量同步、ima 文件夹递归、GitHub tree 子目录与 WebUI 管理。
-short_desc: 外部知识源订阅同步到 AstrBot 知识库
+desc: "astrbot 知识库同步插件，装这一个就够了！支持从腾讯 ima、有道云笔记、GitHub、Url 等同步，更多支持的平台正在路上..."
+short_desc: 外部知识源一键同步到 AstrBot 知识库
 author: icenfn
-version: v0.1.0
+version: v1.0.0
 repo: https://github.com/icenfn/astrbot-plugin-KBridge
 astrbot_version: ">=4.16"
