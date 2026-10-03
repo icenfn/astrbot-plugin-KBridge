@@ -2,7 +2,6 @@ const bridge = window.AstrBotPluginPage;
 const $ = (id) => document.getElementById(id);
 
 let pollTimer = null;
-let logTimer = null;
 let stats = null;
 let platformConfig = null;
 let kbsCache = [];
@@ -74,6 +73,36 @@ function showConfirm({ title, message, danger = false, confirmText = "确认", e
     const okBtn = overlay.querySelector('[data-act="ok"]');
     okBtn.textContent = confirmText;
     okBtn.onclick = () => { overlay.classList.remove("open"); resolve(true); };
+    requestAnimationFrame(() => overlay.classList.add("open"));
+  });
+}
+
+function showFullPage({ title, contentHtml, onMount }) {
+  return new Promise((resolve) => {
+    let overlay = document.getElementById("full-modal");
+    const close = () => {
+      overlay.classList.remove("open");
+      resolve(false);
+    };
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "full-modal";
+      overlay.className = "modal-overlay full";
+      overlay.innerHTML = `<div class="modal full">
+        <div class="modal-head"><span class="modal-title"></span><button class="modal-x" aria-label="关闭">×</button></div>
+        <div class="modal-body full-body"></div>
+      </div>`;
+      document.body.appendChild(overlay);
+      overlay.querySelector(".modal-x").onclick = close;
+      overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape" && overlay.classList.contains("open")) close();
+      });
+    }
+    overlay.querySelector(".modal-title").textContent = title;
+    const body = overlay.querySelector(".modal-body");
+    body.innerHTML = contentHtml;
+    if (onMount) onMount(body, close);
     requestAnimationFrame(() => overlay.classList.add("open"));
   });
 }
@@ -197,58 +226,72 @@ function renderPlatforms() {
             </span>
           </div>
           <div class="platform-name">${p.name}</div>
-          <div class="platform-desc">${p.supported ? "点击配置凭据并管理同步" : "开发中，敬请期待"}</div>
-          ${p.supported ? '<div class="platform-form hidden"></div>' : ""}
+          <div class="platform-desc">${p.supported ? "点击进入配置" : "开发中，敬请期待"}</div>
+          ${p.supported ? '<div class="open-hint">进入配置 ›</div>' : ""}
         </div>`;
       }).join("")}
     </div>`;
+  root.querySelectorAll(".platform-card").forEach((card) => {
+    card.onclick = () => openPlatformConfig(card.dataset.platform);
+  });
+}
 
-  // ima 平台展开表单
-  const card = document.querySelector('[data-platform="ima"]');
-  if (card) {
-    const form = card.querySelector(".platform-form");
-    form.innerHTML = `
+async function openPlatformConfig(id) {
+  const p = platformConfig?.platforms?.[id];
+  if (!p) return;
+  if (!p.supported) {
+    toast(`${p.name} 即将支持`, "warn");
+    return;
+  }
+  const cidSet = platformConfig.values["ima_client_id"];
+  const keySet = platformConfig.values["ima_api_key"];
+  await showFullPage({
+    title: `${p.name} · 平台配置`,
+    contentHtml: `
       <div class="pfield">
         <label>Client ID</label>
         <input class="input" id="pf-cid" type="text" autocomplete="off"
-          placeholder="${platformConfig.values["ima_client_id"] ? "已配置（留空保持不变）" : "输入 Client ID"}" />
+          placeholder="${cidSet ? "已配置（留空保持不变）" : "输入 Client ID"}" />
       </div>
       <div class="pfield">
         <label>API Key</label>
         <input class="input" id="pf-key" type="text" autocomplete="off"
-          placeholder="${platformConfig.values["ima_api_key"] ? "已配置（留空保持不变）" : "输入 API Key"}" />
+          placeholder="${keySet ? "已配置（留空保持不变）" : "输入 API Key"}" />
       </div>
-      <button class="btn primary" data-action="save-ima">保存配置</button>`;
-    card.addEventListener("click", (e) => {
-      if (e.target.closest("[data-action=save-ima]")) return;
-      if (e.target.closest(".platform-form")) return;
-      form.classList.toggle("hidden");
-    });
-    const save = form.querySelector("[data-action=save-ima]");
-    save.onclick = async () => {
-      const fields = {};
-      const cid = $("pf-cid").value.trim();
-      const key = $("pf-key").value.trim();
-      if (cid) fields.ima_client_id = cid;
-      if (key) fields.ima_api_key = key;
-      if (!Object.keys(fields).length) {
-        toast("没有需要保存的内容", "warn");
-        return;
-      }
-      try {
-        const r = await bridge.apiPost("config", { fields });
-        toast(`已保存：${r.saved.join(", ")}`);
-        $("pf-cid").value = "";
-        $("pf-key").value = "";
-        await loadConfig();
-        await loadStats();
-        renderPlatforms();
-        renderOverview();
-      } catch (e) {
-        toast(e.message, "error");
-      }
-    };
-  }
+      <div class="pfield">
+        <label>自动创建目标知识库</label>
+        <label class="switch">
+          <input id="pf-auto-kb" type="checkbox" ${stats?.auto_create_kb ? "checked" : ""} />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <button class="btn primary" id="pf-save">保存配置</button>`,
+    onMount: (body, close) => {
+      body.querySelector("#pf-save").onclick = async () => {
+        const fields = {};
+        const cid = body.querySelector("#pf-cid").value.trim();
+        const key = body.querySelector("#pf-key").value.trim();
+        if (cid) fields.ima_client_id = cid;
+        if (key) fields.ima_api_key = key;
+        fields.auto_create_kb = body.querySelector("#pf-auto-kb").checked;
+        if (!Object.keys(fields).length) {
+          toast("没有需要保存的内容", "warn");
+          return;
+        }
+        try {
+          const r = await bridge.apiPost("config", { fields });
+          toast(`已保存：${r.saved.join(", ")}`, "success");
+          await loadConfig();
+          await loadStats();
+          renderPlatforms();
+          renderOverview();
+          close();
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      };
+    },
+  });
 }
 
 function renderSubs() {
@@ -305,19 +348,8 @@ function renderSubs() {
       </div>
       <p class="add-hint dim">拉取后自动创建 AstrBot 知识库（名称与 IMA 知识库一致），无需手动指定目标库名</p>
     </div>
-    ${subListHtml}
-    <div class="log-card">
-      <div class="log-head">
-        <span>同步日志</span>
-        <button class="btn small" data-action="reload-logs">${ICONS.sync}刷新</button>
-      </div>
-      <div class="log-list" id="log-list">
-        <div class="log-empty dim">加载中…</div>
-      </div>
-    </div>`;
+    ${subListHtml}`;
 
-  root.querySelector("[data-action=reload-logs]").onclick = loadLogs;
-  loadLogs();
   const addBtn = root.querySelector("[data-action=add-sub]");
   addBtn.onclick = async () => {
     const kbSel = $("sub-kb");
@@ -335,7 +367,11 @@ function renderSubs() {
         kb_name: kbName,
         platform,
       });
-      toast(`已拉取：${r.sub.kb_name}`);
+      if (r.exists) {
+        toast(`已在同步列表中：${r.sub.kb_name}`, "warn");
+      } else {
+        toast(`已拉取：${r.sub.kb_name}`, "success");
+      }
       await refresh();
     } catch (e) {
       toast(e.message, "error");
@@ -377,26 +413,6 @@ function subCard(s, i) {
 }
 
 
-async function loadLogs() {
-  const list = document.getElementById("log-list");
-  if (!list) return;
-  try {
-    const r = await bridge.apiGet("logs");
-    if (!r.items || !r.items.length) {
-      list.innerHTML = `<div class="log-empty dim">暂无 KBridge 日志 · 触发一次同步后这里会显示同步过程与结果</div>`;
-      return;
-    }
-    list.innerHTML = r.items
-      .map((it) => {
-        const lv = it.level || "INFO";
-        const cls = lv === "ERRO" || lv === "ERROR" ? "err" : lv === "WARN" || lv === "WARNING" ? "warn" : lv === "DBUG" || lv === "DEBUG" ? "dbg" : "";
-        return `<div class="log-line ${cls}"><span class="log-time">${it.time || ""}</span><span class="log-lv">${esc(lv)}</span><span class="log-msg">${esc(it.message || "")}</span></div>`;
-      })
-      .join("");
-  } catch {
-    /* 静默 */
-  }
-}
 
 // ---------- 操作 ----------
 
@@ -439,7 +455,6 @@ function startPoll() {
   pollTimer = setInterval(async () => {
     try {
       const s = await loadStats();
-      renderSchedule();
       renderOverview();
       if (!s.is_syncing) {
         clearInterval(pollTimer);
@@ -472,15 +487,6 @@ function switchView(view) {
   document.querySelectorAll(".nav-item, .tab-item").forEach((el) => {
     el.classList.toggle("active", el.dataset.view === view);
   });
-  // 同步管理视图：日志 5s 轮询，离开停止
-  if (view === "subs") {
-    if (!logTimer) {
-      logTimer = setInterval(loadLogs, 5000);
-    }
-  } else if (logTimer) {
-    clearInterval(logTimer);
-    logTimer = null;
-  }
   renderCurrentView();
 }
 
@@ -534,7 +540,6 @@ async function main() {
   }
   renderOverview();
   renderPlatforms();
-  renderSchedule();
 }
 
 main();

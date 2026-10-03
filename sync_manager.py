@@ -168,6 +168,11 @@ class SyncManager:
 
     # ---------- 同步源管理 ----------
 
+    async def get_sub_by_kb_id(self, kb_id: str) -> Subscription | None:
+        """按 IMA 知识库 ID 查找已存在的同步源。"""
+        subs = await self.get_subs()
+        return next((s for s in subs if s.kb_id == kb_id), None)
+
     async def add_subscription(
         self, kb_id: str, kb_name: str = "", target_kb: str = "", platform: str = "ima"
     ) -> Subscription:
