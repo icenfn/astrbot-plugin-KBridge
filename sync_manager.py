@@ -32,6 +32,8 @@ logger = logging.getLogger("astrbot")
 
 KV_SUBS = "kbridge_subs"
 KV_INDEX = "kbridge_index"
+KV_SCHED_LOGS = "kbridge_sched_logs"
+MAX_SCHED_LOGS = 100  # 定时同步日志环形上限
 
 SUPPORTED_EXT = {"md", "txt", "markdown", "rst", "adoc", "docx", "xlsx", "xls", "pdf", "epub"}
 NOTE_MEDIA_TYPES = {11, 12}
@@ -251,6 +253,35 @@ class SyncManager:
                 self.logger.info(f"[KBridge] 删除同步源: {sub.kb_name} ({sub.kb_id})")
                 return sub
         raise ValueError("同步源不存在")
+
+    async def set_sub_enabled(
+        self, kb_id: str, platform: str = "ima", enabled: bool = True
+    ) -> Subscription:
+        """开关同步源的定时同步（enabled）。"""
+        subs = await self.get_subs()
+        for s in subs:
+            if s.kb_id == kb_id and s.platform == (platform or "ima"):
+                s.enabled = bool(enabled)
+                await self._save_subs(subs)
+                self.logger.info(f"[KBridge] 同步源定时开关: {s.kb_name} -> {s.enabled}")
+                return s
+        raise ValueError("同步源不存在")
+
+    async def add_schedule_log(self, level: str, message: str) -> None:
+        """写入定时同步日志（环形，最多 MAX_SCHED_LOGS 条，新在前）。"""
+        logs = await self.star.get_kv_data(KV_SCHED_LOGS, []) or []
+        logs.insert(
+            0,
+            {
+                "t": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "level": level,
+                "msg": message,
+            },
+        )
+        await self.star.put_kv_data(KV_SCHED_LOGS, logs[:MAX_SCHED_LOGS])
+
+    async def get_schedule_logs(self) -> list[dict]:
+        return await self.star.get_kv_data(KV_SCHED_LOGS, []) or []
 
     async def ensure_ima_subs(self) -> list[dict[str, Any]]:
         """确保 IMA 自建知识库均有对应同步源（页面直接展示，无需手动拉取）。

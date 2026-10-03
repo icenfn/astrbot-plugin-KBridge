@@ -70,12 +70,89 @@ class KBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        # 清理旧版本遗留配置键（前缀/定时已移除）
+        # 清理旧版本遗留配置键（前缀/旧定时分钟键已移除）
         for stale in ("target_kb_prefix", "sync_interval_minutes"):
             if stale in self.config:
                 del self.config[stale]
         self.manager = SyncManager(self, context, config)
+        self._sched_task: asyncio.Task | None = None
         self._register_web_apis()
+        self._restart_schedule()
+
+    # ---------- 定时同步 ----------
+
+    def _restart_schedule(self) -> None:
+        """按配置（schedule_enabled / schedule_interval）重建后台定时任务。"""
+        if self._sched_task and not self._sched_task.done():
+            self._sched_task.cancel()
+        self._sched_task = None
+        interval = max(1, int(self.config.get("schedule_interval") or 0))
+        if not self.config.get("schedule_enabled") or interval <= 0:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return  # 无事件循环环境（极罕见），定时不启动
+        self._sched_task = asyncio.create_task(self._schedule_loop(interval))
+        self.logger.info(f"[KBridge] 定时同步已启动：每 {self._fmt_interval(interval)}")
+
+    async def _schedule_loop(self, interval: int) -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                if not self.config.get("schedule_enabled"):
+                    continue
+                await self._run_scheduled_sync()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                self.logger.exception("定时同步任务异常")
+
+    @staticmethod
+    def _fmt_interval(sec: int) -> str:
+        d, sec = divmod(sec, 86400)
+        h, sec = divmod(sec, 3600)
+        m, s = divmod(sec, 60)
+        parts = []
+        if d:
+            parts.append(f"{d}天")
+        if h:
+            parts.append(f"{h}小时")
+        if m:
+            parts.append(f"{m}分")
+        if s:
+            parts.append(f"{s}秒")
+        return "".join(parts) or "0"
+
+    async def _run_scheduled_sync(self) -> None:
+        """执行一轮定时同步：仅同步已开启（enabled）的同步源，并写入日志。"""
+        if self.manager.is_syncing:
+            await self.manager.add_schedule_log("warn", "跳过：已有同步任务进行中")
+            return
+        subs = await self.manager.get_subs()
+        enabled = [s for s in subs if s.enabled]
+        if not enabled:
+            await self.manager.add_schedule_log("warn", "没有开启定时同步的同步源，跳过本轮")
+            return
+        await self.manager.add_schedule_log("ok", f"定时同步开始：{len(enabled)} 个同步源")
+        try:
+            results = await self.manager.sync_all()
+            for r in results:
+                name = next((s.kb_name for s in enabled if s.kb_id == r.kb_id), r.kb_id)
+                if r.failed > 0:
+                    level = "error"
+                elif r.skipped > 0:
+                    level = "warn"
+                else:
+                    level = "ok"
+                await self.manager.add_schedule_log(
+                    level,
+                    f"{name}：共 {r.total}，新增 {r.synced}，跳过 {r.skipped}，失败 {r.failed}",
+                )
+            await self.manager.add_schedule_log("ok", "定时同步完成")
+        except Exception as e:  # noqa: BLE001
+            self.logger.exception("定时同步失败")
+            await self.manager.add_schedule_log("error", f"定时同步异常：{e}")
 
     # ---------- WebUI 页面 API ----------
 
@@ -95,7 +172,10 @@ class KBridge(Star):
             (f"/{PLUGIN_NAME}/subs", self.api_subs, ["GET"], "可同步知识库列表"),
             (f"/{PLUGIN_NAME}/subs/add", self.api_subs_add, ["POST"], "添加 GitHub 仓库"),
             (f"/{PLUGIN_NAME}/subs/remove", self.api_subs_remove, ["POST"], "删除同步源"),
+            (f"/{PLUGIN_NAME}/subs/toggle", self.api_subs_toggle, ["POST"], "定时同步开关"),
             (f"/{PLUGIN_NAME}/sync", self.api_sync, ["POST"], "触发同步"),
+            (f"/{PLUGIN_NAME}/schedule", self.api_schedule_get, ["GET"], "读取定时同步"),
+            (f"/{PLUGIN_NAME}/schedule", self.api_schedule_save, ["POST"], "保存定时同步"),
             (f"/{PLUGIN_NAME}/config", self.api_config_get, ["GET"], "读取平台配置"),
             (f"/{PLUGIN_NAME}/config", self.api_config_save, ["POST"], "保存平台配置"),
         ]
@@ -286,6 +366,67 @@ class KBridge(Star):
         return json_response({"removed": True, "name": sub.kb_name, "platform": sub.platform})
 
     @webapi_handler
+    async def api_subs_toggle(self):
+        payload = await request.json(default={})
+        kb_id = str(payload.get("kb_id") or "").strip()
+        platform = str(payload.get("platform") or "ima").strip() or "ima"
+        if not kb_id:
+            return error_response("缺少 kb_id", status_code=400)
+        try:
+            sub = await self.manager.set_sub_enabled(
+                kb_id, platform, bool(payload.get("enabled"))
+            )
+        except ValueError as e:
+            return error_response(str(e), status_code=400)
+        return json_response({"enabled": sub.enabled, "name": sub.kb_name})
+
+    @webapi_handler
+    async def api_schedule_get(self):
+        sec = int(self.config.get("schedule_interval") or 0)
+        if sec < 1:
+            sec = 0
+        d, r = divmod(sec, 86400)
+        h, r = divmod(r, 3600)
+        m, s = divmod(r, 60)
+        return json_response(
+            {
+                "enabled": bool(self.config.get("schedule_enabled")),
+                "days": d,
+                "hours": h,
+                "minutes": m,
+                "seconds": s,
+                "logs": await self.manager.get_schedule_logs(),
+            }
+        )
+
+    @webapi_handler
+    async def api_schedule_save(self):
+        payload = await request.json(default={})
+        try:
+            days = max(0, int(payload.get("days") or 0))
+            hours = max(0, int(payload.get("hours") or 0))
+            minutes = max(0, int(payload.get("minutes") or 0))
+            seconds = max(0, int(payload.get("seconds") or 0))
+        except (TypeError, ValueError):
+            return error_response("间隔时间必须是数字", status_code=400)
+        total = days * 86400 + hours * 3600 + minutes * 60 + seconds
+        if total < 1:
+            return error_response("间隔时间至少 1 秒", status_code=400)
+        enabled = bool(payload.get("enabled"))
+        self.config["schedule_enabled"] = enabled
+        self.config["schedule_interval"] = total
+        self.config.save_config()
+        self._restart_schedule()
+        if enabled:
+            await self.manager.add_schedule_log(
+                "ok", f"定时同步已启用：每 {self._fmt_interval(total)}"
+            )
+        else:
+            await self.manager.add_schedule_log("warn", "定时同步已关闭")
+        self.logger.info(f"[KBridge] 定时同步配置更新: enabled={enabled} interval={total}s")
+        return json_response({"enabled": enabled, "interval": total})
+
+    @webapi_handler
     async def api_sync(self):
         payload = await request.json(default={})
         if self.manager.is_syncing:
@@ -318,6 +459,9 @@ class KBridge(Star):
     # ---------- 生命周期 ----------
 
     async def terminate(self) -> None:
+        if self._sched_task and not self._sched_task.done():
+            self._sched_task.cancel()
+            self._sched_task = None
         await self.manager.close()
 
     # ---------- 命令 ----------

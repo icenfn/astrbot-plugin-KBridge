@@ -14,6 +14,7 @@ const VIEW_TITLES = {
   overview: "总览",
   platforms: "平台配置",
   subs: "同步管理",
+  sched: "定时同步",
 };
 
 const ICONS = {
@@ -24,6 +25,7 @@ const ICONS = {
   link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></svg>',
   book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14z"/><path d="M20 17v4H6.5A2.5 2.5 0 0 1 4 18.5"/></svg>',
   bolt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
 };
 
 function toast(message, type = "ok") {
@@ -197,13 +199,37 @@ async function openPlatformConfig(id) {
     toast(`${p.name} 即将支持`, "warn");
     return;
   }
+  // GitHub 平台配置：除凭据外，还内嵌仓库 URL 管理（添加/删除/列表）
+  let ghRepos = [];
+  if (id === "github") {
+    try {
+      const r = await bridge.apiGet("subs");
+      ghRepos = (r || []).filter((s) => s.platform === "github" && !s.error);
+    } catch { /* 忽略，仓库区保持空 */ }
+  }
+  const ghBlock = id === "github"
+    ? `<div class="gh-section">
+        <div class="gh-head">已添加仓库<span class="dim"> · ${ghRepos.length}</span></div>
+        <div class="gh-list">
+          ${ghRepos.length ? ghRepos.map((s) => `
+            <div class="gh-row">
+              <span class="gh-name" title="${esc(s.kb_id)}">${esc(s.display_name || s.kb_name)}</span>
+              <button class="btn small danger" data-rm="${esc(s.kb_id)}">${ICONS.trash}</button>
+            </div>`).join("") : `<div class="empty-state small">暂无仓库</div>`}
+        </div>
+        <div class="add-row">
+          <input class="input grow" id="gh-url" placeholder="https://github.com/owner/repo 或 /tree/branch/path" />
+          <button class="btn primary" data-action="add-gh">${ICONS.plus}添加仓库</button>
+        </div>
+        <p class="add-hint dim">支持整个仓库或 tree 子目录；仅导入 AstrBot 可解析格式（md/txt/pdf/docx/xlsx/epub 等）</p>
+      </div>` : "";
   await showFullPage({
     title: `${p.name} · 平台配置`,
     contentHtml: `
       ${(p.fields || []).map((f) => {
         const isSecret = !!f.secret;
         const cur = platformConfig.values[f.key];
-        const has = typeof cur === "string" ? !!cur : !!cur;
+        const has = !!cur;
         return `
         <div class="pfield">
           <label>${f.label}</label>
@@ -213,9 +239,39 @@ async function openPlatformConfig(id) {
             placeholder="${isSecret ? (has ? "已配置（留空保持不变）" : `输入 ${f.label}`) : `默认 ${cur || ""}`}" />
         </div>`;
       }).join("")}
-      <p class="add-hint dim">ima 目标知识库自动创建（名称与源一致）；有道云同步至上方指定的 AstrBot 知识库</p>
+      ${ghBlock}
       <button class="btn primary" id="pf-save">保存配置</button>`,
     onMount: (body, close) => {
+      const addGh = async () => {
+        const url = body.querySelector("#gh-url")?.value?.trim();
+        if (!url) {
+          toast("请输入 GitHub 仓库地址", "warn");
+          return;
+        }
+        try {
+          const r = await bridge.apiPost("subs/add", { url, platform: "github" });
+          toast(r.exists ? `已在同步列表：${r.sub.kb_name}` : `已添加仓库：${r.sub.kb_name}`, r.exists ? "warn" : "success");
+          await refresh();
+          close();
+          openPlatformConfig("github");
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      };
+      const rmRepo = async (kbId) => {
+        try {
+          const r = await bridge.apiPost("subs/remove", { kb_id: kbId, platform: "github" });
+          toast(`已删除仓库：${r.name}`, "success");
+          await refresh();
+          close();
+          openPlatformConfig("github");
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      };
+      body.querySelector("[data-action=add-gh]")?.addEventListener("click", addGh);
+      body.querySelector("#gh-url")?.addEventListener("keydown", (e) => { if (e.key === "Enter") addGh(); });
+      body.querySelectorAll("[data-rm]").forEach((b) => b.addEventListener("click", () => rmRepo(b.dataset.rm)));
       body.querySelector("#pf-save").onclick = async () => {
         const fields = {};
         body.querySelectorAll(".input[data-key]").forEach((inp) => {
@@ -252,14 +308,16 @@ function subCard(s) {
   const statusCls = s.last_status === "ok" ? "ok" : s.last_status === "error" ? "err" : "warn";
   const name = s.display_name || s.kb_name || s.kb_id || "未命名";
   const target = s.platform === "youdao" ? s.target_kb || "YoudaoNote" : s.platform === "github" ? (s.target_kb || "") : "";
-  const delBtn = s.platform === "github"
-    ? `<button class="btn small danger" data-del="${s.kb_id}" data-platform="${s.platform}">${ICONS.trash}</button>` : "";
   return `
     <div class="sub-card">
       <div class="sub-main">
         <div class="sub-line1">
           <span class="sub-name">${esc(name)}</span>
           <span class="badge ${statusCls}" title="${esc(s.last_error || "")}">${statusText}</span>
+          <label class="sub-toggle" title="定时同步开关">
+            <input type="checkbox" data-tgl="${esc(s.kb_id)}" data-platform="${esc(s.platform)}" ${s.enabled ? "checked" : ""} />
+            <span>定时</span>
+          </label>
         </div>
         <div class="sub-line2">
           ${target ? `<span class="dim">目标库 ${esc(target)}</span>` : ""}
@@ -268,8 +326,7 @@ function subCard(s) {
         </div>
       </div>
       <div class="sub-ops">
-        <button class="btn small" data-kb="${s.kb_id}" data-platform="${s.platform}">${ICONS.sync}同步</button>
-        ${delBtn}
+        <button class="btn small" data-kb="${esc(s.kb_id)}" data-platform="${esc(s.platform)}">${ICONS.sync}同步</button>
       </div>
     </div>`;
 }
@@ -299,21 +356,12 @@ function renderSubs() {
   if (!groups.has("github")) groups.set("github", []);
   groups.forEach((subs, g) => {
     const label = platformConfig?.platforms?.[g]?.name || g;
-    const addPanel = g === "github"
-      ? `<div class="add-panel">
-          <div class="add-row">
-            <input class="input grow" id="gh-url" placeholder="https://github.com/owner/repo 或 /tree/branch/path" />
-            <button class="btn primary" data-action="add-gh">${ICONS.plus}添加仓库</button>
-          </div>
-          <p class="add-hint dim">支持整个仓库或 tree 子目录；仅导入 AstrBot 可解析格式（md/txt/pdf/docx/xlsx/epub 等）</p>
-        </div>` : "";
     const subListHtml = subs.length
       ? subs.map((s) => subCard(s)).join("")
       : `<div class="empty-state small">暂无已添加仓库</div>`;
     html += `
       <div class="sub-group">
         <div class="sub-group-title">${label}<span class="dim"> · ${subs.length}</span></div>
-        ${addPanel}
         <div class="sub-list">${subListHtml}</div>
       </div>`;
   });
@@ -321,38 +369,22 @@ function renderSubs() {
     html = `<div class="empty-state">暂无同步源 · 先到「平台配置」填写凭据</div>`;
   }
   root.innerHTML = html;
-  const addBtn = root.querySelector("[data-action=add-gh]");
-  if (addBtn) {
-    addBtn.onclick = async () => {
-      const url = $("gh-url")?.value?.trim();
-      if (!url) {
-        toast("请输入 GitHub 仓库地址", "warn");
-        return;
-      }
-      try {
-        const r = await bridge.apiPost("subs/add", { url, platform: "github" });
-        if (r.exists) toast(`已在同步列表：${r.sub.kb_name}`, "warn");
-        else toast(`已添加仓库：${r.sub.kb_name}`, "success");
-        await refresh();
-      } catch (e) {
-        toast(e.message, "error");
-      }
-    };
-  }
   root.querySelectorAll("[data-kb]").forEach((b) => {
     b.onclick = () => triggerSync(b.dataset.kb, b.dataset.platform || "ima");
   });
-  root.querySelectorAll("[data-del]").forEach((b) => {
-    b.onclick = async () => {
+  root.querySelectorAll("[data-tgl]").forEach((t) => {
+    t.onchange = async () => {
       try {
-        const r = await bridge.apiPost("subs/remove", {
-          kb_id: b.dataset.del,
-          platform: b.dataset.platform || "ima",
+        const r = await bridge.apiPost("subs/toggle", {
+          kb_id: t.dataset.tgl,
+          platform: t.dataset.platform || "ima",
+          enabled: t.checked,
         });
-        toast(`已删除同步源：${r.name}`, "success");
+        toast(`${r.name} 定时同步已${r.enabled ? "开启" : "关闭"}`, "success");
         await refresh();
       } catch (e) {
         toast(e.message, "error");
+        t.checked = !t.checked; // 回滚
       }
     };
   });
@@ -397,6 +429,103 @@ async function refresh() {
   renderOverview();
 }
 
+// ---------- 定时同步 ----------
+
+async function loadSchedule() {
+  return bridge.apiGet("schedule");
+}
+
+async function loadScheduleData(render = true) {
+  const root = $("view-sched");
+  root._loading = true;
+  if (render) renderSchedule();
+  try {
+    root._data = await loadSchedule();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+  root._loading = false;
+  if (render) renderSchedule();
+}
+
+function schedLogHtml(l) {
+  const cls = l.level === "error" ? "err" : l.level === "warn" ? "warn" : "ok";
+  return `<div class="sched-log ${cls}">
+    <span class="sched-log-t">${esc(l.t)}</span>
+    <span class="sched-log-msg">${esc(l.msg)}</span>
+  </div>`;
+}
+
+function renderSchedule() {
+  const root = $("view-sched");
+  if (root._loading) {
+    root.innerHTML = `<div class="loading"><span class="spinner lg"></span>加载中…</div>`;
+    return;
+  }
+  const d = root._data;
+  if (!d) {
+    root.innerHTML = `<div class="empty-state">加载定时同步配置失败 · 点击右上角刷新重试</div>`;
+    return;
+  }
+  root.innerHTML = `
+    <div class="sched-panel">
+      <div class="sched-config card">
+        <div class="pfield">
+          <label class="switch-label">
+            <input type="checkbox" id="sched-enabled" ${d.enabled ? "checked" : ""} />
+            <span>启用定时同步</span>
+          </label>
+        </div>
+        <div class="sched-interval">
+          <span class="dim">间隔</span>
+          <input class="input num" id="sched-d" type="number" min="0" value="${d.days}" /> <span>天</span>
+          <input class="input num" id="sched-h" type="number" min="0" value="${d.hours}" /> <span>小时</span>
+          <input class="input num" id="sched-m" type="number" min="0" value="${d.minutes}" /> <span>分</span>
+          <input class="input num" id="sched-s" type="number" min="0" value="${d.seconds}" /> <span>秒</span>
+        </div>
+        <p class="add-hint dim">按间隔自动同步「同步管理」中已开启「定时」的知识库</p>
+        <button class="btn primary" id="sched-save">保存设置</button>
+      </div>
+      <div class="sched-logs card">
+        <div class="sched-log-title">自动同步日志</div>
+        <div class="sched-log-list">
+          ${d.logs && d.logs.length ? d.logs.map(schedLogHtml).join("") : `<div class="empty-state small">暂无日志</div>`}
+        </div>
+      </div>
+    </div>`;
+  $("sched-save").onclick = async () => {
+    const enabled = $("sched-enabled").checked;
+    const days = parseInt($("sched-d").value || "0", 10) || 0;
+    const hours = parseInt($("sched-h").value || "0", 10) || 0;
+    const minutes = parseInt($("sched-m").value || "0", 10) || 0;
+    const seconds = parseInt($("sched-s").value || "0", 10) || 0;
+    const total = days * 86400 + hours * 3600 + minutes * 60 + seconds;
+    if (enabled && total < 1) {
+      toast("启用定时同步时，间隔时间至少 1 秒", "warn");
+      return;
+    }
+    try {
+      const r = await bridge.apiPost("schedule", { enabled, days, hours, minutes, seconds });
+      toast(r.enabled ? `定时同步已启用（每 ${fmtInterval(r.interval)}）` : "定时同步已关闭", "success");
+      await loadScheduleData();
+    } catch (e) {
+      toast(e.message, "error");
+    }
+  };
+}
+
+function fmtInterval(sec) {
+  const d = Math.floor(sec / 86400); sec %= 86400;
+  const h = Math.floor(sec / 3600); sec %= 3600;
+  const m = Math.floor(sec / 60); const s = sec % 60;
+  const parts = [];
+  if (d) parts.push(`${d}天`);
+  if (h) parts.push(`${h}小时`);
+  if (m) parts.push(`${m}分`);
+  if (s) parts.push(`${s}秒`);
+  return parts.join("") || "0";
+}
+
 // ---------- 导航 ----------
 
 function switchView(view) {
@@ -415,6 +544,10 @@ function renderCurrentView() {
   if (activeView === "overview") renderOverview();
   if (activeView === "platforms") renderPlatforms();
   if (activeView === "subs") renderSubs();
+  if (activeView === "sched") {
+    if (!$("view-sched")._data) loadScheduleData();
+    else renderSchedule();
+  }
 }
 
 // ---------- 初始化 ----------
@@ -433,6 +566,7 @@ async function main() {
   $("btn-refresh").onclick = async () => {
     try {
       await refresh();
+      if (activeView === "sched") await loadScheduleData();
       toast("已刷新");
     } catch (e) {
       toast(e.message, "error");

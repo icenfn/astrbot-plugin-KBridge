@@ -490,6 +490,24 @@ svg { width: 18px; height: 18px; flex: none; }
 }
 .sub-name { font-weight: 600; font-size: 14px; }
 .sub-line1 { display: flex; align-items: center; gap: 8px; }
+
+/* 定时同步开关（卡片内） */
+.sub-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--dim);
+  cursor: pointer;
+  user-select: none;
+}
+.sub-toggle input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--good);
+  cursor: pointer;
+}
 .sub-line2 {
   display: flex;
   align-items: center;
@@ -686,4 +704,79 @@ svg { width: 18px; height: 18px; flex: none; }
   .add-row .btn { flex: 1; justify-content: center; }
   #toast-wrap { left: 18px; right: 18px; }
   .toast { max-width: none; }
+}
+
+/* ---------- GitHub 仓库管理（平台配置弹窗） ---------- */
+.gh-section { margin-bottom: 20px; }
+.gh-head { font-size: 13px; font-weight: 600; color: var(--dim); margin-bottom: 8px; }
+.gh-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.gh-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.gh-name {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 定时同步 ---------- */
+.sched-panel { display: flex; flex-direction: column; gap: 16px; }
+.sched-config { display: flex; flex-direction: column; gap: 12px; }
+.sched-interval {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sched-interval .input.num { width: 76px; }
+.switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.switch-label input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--good);
+  cursor: pointer;
+}
+.sched-logs { display: flex; flex-direction: column; gap: 8px; }
+.sched-log-title { font-size: 13px; font-weight: 600; color: var(--dim); }
+.sched-log-list { display: flex; flex-direction: column; gap: 6px; max-height: 380px; overflow-y: auto; }
+.sched-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 3px solid var(--border);
+  background: var(--panel2);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.sched-log-t { font-size: 11px; color: var(--dim); font-family: ui-monospace, monospace; }
+.sched-log-msg { font-size: 13px; }
+.sched-log.ok { border-left-color: var(--good); }
+.sched-log.ok .sched-log-msg { color: var(--good); }
+.sched-log.warn { border-left-color: var(--warn); }
+.sched-log.warn .sched-log-msg { color: var(--warn); }
+.sched-log.err { border-left-color: var(--danger); }
+.sched-log.err .sched-log-msg { color: var(--danger); }
+
+/* ---------- 通用卡片 ---------- */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: var(--shadow);
 }
