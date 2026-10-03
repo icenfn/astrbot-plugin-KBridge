@@ -14,6 +14,7 @@
 - 删除 AstrBot 知识库后再同步出现「跳过」导致空知识库：目标知识库重建（`resolve_target_kb` 返回 recreated）时清空该同步源增量索引，全量重同步
 - 有道云笔记同步偶发 `read operation timed out`：POST/响应等待超时 30s→120s，失败重试间隔增大
 - 同步列表状态标签被长标题顶出列表外：`.sub-list` 卡片默认 `min-width:auto` 被内容撑爆，已加 `min-width:0` 收缩，状态标签 `flex:none` 固定在元信息行首
+- 同步列表「已同步 x」改为**从 AstrBot 知识库实际读取文档数**（`kb.get_document_count()`），不再依赖插件增量索引；知识库被删除时归零并显示「未同步」
 
 ### Changed
 
