@@ -34,6 +34,7 @@
 - **自动建库 + 重排序**：目标知识库不存在时自动创建，并自动绑定已配置的 Embedding 与 Rerank（重排序）模型
 - **定时同步**：按间隔（天/时/分/秒）自动同步已开启「定时」的同步源，日志高亮分级展示（成功/警告/失败）
 - **平台开关**：每个平台可独立启用/禁用，禁用后同步列表自动标记、手动/定时/全部同步均跳过该平台
+- **url2kb**：网页一键转 Markdown 入库——多个分组（分组名即 AstrBot 知识库名，带备注）、多 URL（自动识别网页标题），同步/定时同步均支持
 - **WebUI 管理页面**：插件自带 GUI，平台配置、同步管理、定时同步一目了然
 - **命令管理**：`/kbridge` 全命令组
 
@@ -50,6 +51,7 @@
    - **ima**：页面自动展示自建知识库，点击卡片「同步」即可
    - **有道云**：显示单库同步源，点击「同步」即可
    - **GitHub**：在「平台配置 → Github」中输入仓库 URL（如 `https://github.com/Chalarangelo/30-seconds-of-code`），回到同步页点击「同步」
+   - **url2kb**：在「平台配置 → url2kb」中添加分组（名称即知识库名）与网页 URL（自动识别标题），回到同步页点击「同步」即抓取转 Markdown 入库
 3. 在「定时同步」页设置间隔并启用，即可自动同步已开启「定时」的同步源
 
 ## 平台配置
@@ -61,6 +63,7 @@
 | 有道云笔记 | `youdao_target_kb` | 同步至 AstrBot 知识库名称（默认 `YoudaoNote`） |
 | GitHub | `github_token`（必填） | [https://github.com/settings/tokens](https://github.com/settings/tokens) 生成（勾选 `repo` 权限）；未配置时无法添加仓库 |
 | GitHub | `github_raw_mirror`（可选） | Raw 加速镜像前缀（默认 `https://gh.dpik.top/`），raw 文件下载走镜像；留空使用官方源。AstrBot「设置→网络→GitHub 加速地址」仅作用于插件市场下载，插件内需在此单独配置 |
+| url2kb | 无凭据 | 网页转 Markdown：分组（名 = AstrBot 知识库名）+ 备注 + URL 列表（自动识别标题），抓取正文转纯文本 Markdown 入库 |
 
 ## WebUI 管理页面
 

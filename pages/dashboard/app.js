@@ -133,6 +133,12 @@ function renderOverview() {
     },
     { label: "同步源", value: stats.sub_count, cls: "", icon: ICONS.book },
     { label: "已同步文档", value: stats.total_synced, cls: "", icon: ICONS.check },
+    {
+      label: "定时同步",
+      value: stats.sched?.enabled ? stats.sched.text : "未启用",
+      cls: stats.sched?.enabled ? "good" : "",
+      icon: ICONS.clock,
+    },
   ];
   root.innerHTML = `
     <div class="stat-grid">
@@ -149,6 +155,7 @@ function renderOverview() {
       <button class="btn primary" data-action="sync-all">${ICONS.sync}同步全部</button>
       <button class="btn" data-action="goto-platforms">${ICONS.link}去配置平台</button>
       <button class="btn" data-action="goto-subs">${ICONS.book}管理同步</button>
+      <button class="btn" data-action="goto-sched">${ICONS.clock}定时设置</button>
     </div>
     ${stats.configured && !Object.values(stats.configured).some(Boolean)
       ? `<div class="notice warn">尚无平台配置：请到「平台配置」填写凭据</div>` : ""}`;
@@ -158,6 +165,8 @@ function renderOverview() {
   if (g1) g1.onclick = () => switchView("platforms");
   const g2 = document.querySelector("[data-action=goto-subs]");
   if (g2) g2.onclick = () => switchView("subs");
+  const g3 = document.querySelector("[data-action=goto-sched]");
+  if (g3) g3.onclick = () => switchView("sched");
 }
 
 function renderPlatforms() {
@@ -170,8 +179,9 @@ function renderPlatforms() {
   root.innerHTML = `<p class="lead">配置各知识源平台凭据，同步即基于此连接</p>
     <div class="platform-grid">
       ${Object.entries(platforms).map(([id, p]) => {
+        const noFields = !(p.fields || []).length;
         const set = p.supported
-          ? (p.fields || []).every((f) => platformConfig.values[f.key])
+          ? (noFields || (p.fields || []).every((f) => platformConfig.values[f.key]))
           : false;
         const off = p.enabled === false;
         return `
@@ -184,7 +194,10 @@ function renderPlatforms() {
             </label>
           </div>
           <div class="platform-name">${p.name}</div>
-          <div class="platform-desc">${p.supported ? (off ? "已禁用，点击可查看/修改配置" : "点击进入配置") : "开发中，敬请期待"}</div>
+          <div class="platform-desc">${p.supported ? (off ? "已禁用，点击可查看/修改配置" : (noFields ? "点击管理网页分组" : "点击进入配置")) : "开发中，敬请期待"}</div>
+          <span class="badge ${p.supported ? (set ? "ok" : "warn") : "soon"}">
+            ${p.supported ? (noFields ? "已就绪" : (set ? "已配置" : "未配置")) : "即将支持"}
+          </span>
           ${p.supported ? '<div class="open-hint">进入配置 ›</div>' : ""}
         </div>`;
       }).join("")}
@@ -244,6 +257,7 @@ async function openPlatformConfig(id) {
         </div>`;
       }).join("")}
       ${ghBlock}
+      ${u2Block}
       <button class="btn primary" id="pf-save">保存配置</button>`,
     onMount: (body, close) => {
       const ghList = body.querySelector(".gh-list");
@@ -296,6 +310,108 @@ async function openPlatformConfig(id) {
       body.querySelector("[data-action=add-gh]")?.addEventListener("click", addGh);
       body.querySelector("#gh-url")?.addEventListener("keydown", (e) => { if (e.key === "Enter") addGh(); });
       if (ghList) renderGhList();
+
+      // ---- url2kb：分组管理（分组名 = AstrBot 知识库名） ----
+      if (id === "url2kb") {
+        const u2Root = body.querySelector(".u2k-list");
+        const u2Head = body.querySelector(".gh-head .dim");
+        const h = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        const groupHtml = (g) => `
+          <div class="u2k-group">
+            <div class="u2k-head">
+              <input class="input u2k-name-i" data-gname="${h(g.id)}" value="${h(g.name)}" placeholder="分组名称" />
+              <button class="btn small" data-save-g="${h(g.id)}">保存</button>
+              <button class="btn small danger" data-rmg="${h(g.id)}">${ICONS.trash}</button>
+            </div>
+            <input class="input u2k-note-i" data-gnote="${h(g.id)}" value="${h(g.note || "")}" placeholder="备注（可选）" />
+            <div class="u2k-urls">
+              ${(g.urls || []).length ? (g.urls || []).map((u) => `
+                <div class="u2k-url">
+                  <span class="u2k-title" title="${h(u.url)}">${h(u.title || u.url)}</span>
+                  <span class="dim u2k-url2">${h(u.url)}</span>
+                  <button class="btn small danger" data-rmu="${h(g.id)}" data-uid="${h(u.id)}">${ICONS.trash}</button>
+                </div>`).join("") : `<div class="empty-state small">暂无 URL</div>`}
+              <div class="add-row">
+                <input class="input grow" id="u2k-url-${h(g.id)}" placeholder="https:// 输入网页地址（自动识别标题）" />
+                <button class="btn" data-add-u="${h(g.id)}">添加 URL</button>
+              </div>
+            </div>
+          </div>`;
+        const renderU2k = async () => {
+          try {
+            const r = await bridge.apiGet("url2kb");
+            const groups = r.groups || [];
+            if (u2Head) u2Head.textContent = ` · ${groups.length}`;
+            u2Root.innerHTML = groups.length
+              ? groups.map(groupHtml).join("")
+              : `<div class="empty-state small">暂无分组 · 先添加一个分组</div>`;
+            u2Root.querySelectorAll("[data-rmg]").forEach((b) =>
+              b.addEventListener("click", () => removeGroup(b.dataset.rmg)));
+            u2Root.querySelectorAll("[data-save-g]").forEach((b) =>
+              b.addEventListener("click", () => saveGroup(b.dataset.saveG)));
+            u2Root.querySelectorAll("[data-rmu]").forEach((b) =>
+              b.addEventListener("click", () => removeUrl(b.dataset.rmu, b.dataset.uid)));
+            u2Root.querySelectorAll("[data-add-u]").forEach((b) =>
+              b.addEventListener("click", () => addUrl(b.dataset.addU)));
+          } catch (e) {
+            toast(e.message, "error");
+          }
+        };
+        const removeGroup = async (gid) => {
+          try {
+            await bridge.apiPost("url2kb/groups", { action: "remove", id: gid });
+            toast("已删除分组", "success");
+            await renderU2k();
+            await refresh();
+          } catch (e) { toast(e.message, "error"); }
+        };
+        const saveGroup = async (gid) => {
+          try {
+            const name = u2Root.querySelector(`[data-gname="${gid}"]`)?.value?.trim();
+            const note = u2Root.querySelector(`[data-gnote="${gid}"]`)?.value?.trim() || "";
+            if (!name) { toast("分组名称必填", "warn"); return; }
+            await bridge.apiPost("url2kb/groups", { action: "update", id: gid, name, note });
+            toast("已保存分组", "success");
+            await renderU2k();
+            await refresh();
+          } catch (e) { toast(e.message, "error"); }
+        };
+        const removeUrl = async (gid, uid) => {
+          try {
+            await bridge.apiPost("url2kb/urls", { action: "remove", group_id: gid, url_id: uid });
+            toast("已删除 URL", "success");
+            await renderU2k();
+            await refresh();
+          } catch (e) { toast(e.message, "error"); }
+        };
+        const addUrl = async (gid) => {
+          const inp = u2Root.querySelector(`#u2k-url-${gid}`);
+          const url = inp?.value?.trim();
+          if (!url) { toast("请输入网页地址", "warn"); return; }
+          try {
+            const r = await bridge.apiPost("url2kb/urls", { action: "add", group_id: gid, url });
+            toast(r.title ? `已添加，识别标题：${r.title}` : "已添加（未能自动识别标题）", r.title ? "success" : "warn");
+            inp.value = "";
+            await renderU2k();
+            await refresh();
+          } catch (e) { toast(e.message, "error"); }
+        };
+        const addGroup = async () => {
+          const name = body.querySelector("#u2k-name")?.value?.trim();
+          if (!name) { toast("分组名称（知识库名）必填", "warn"); return; }
+          const note = body.querySelector("#u2k-note")?.value?.trim() || "";
+          try {
+            await bridge.apiPost("url2kb/groups", { action: "add", name, note });
+            toast(`已添加分组：${name}`, "success");
+            body.querySelector("#u2k-name").value = "";
+            body.querySelector("#u2k-note").value = "";
+            await renderU2k();
+            await refresh();
+          } catch (e) { toast(e.message, "error"); }
+        };
+        body.querySelector("[data-action=add-u2k]")?.addEventListener("click", addGroup);
+        renderU2k();
+      }
       body.querySelector("#pf-save").onclick = async () => {
         const fields = {};
         body.querySelectorAll(".input[data-key]").forEach((inp) => {
@@ -347,7 +463,7 @@ function subCard(s) {
   const statusTitle = missing ? "目标知识库已删除，同步时将自动重建" : (s.last_error || "");
   const name = s.display_name || s.kb_name || s.kb_id || "未命名";
   const meta = [
-    `已同步 ${s.synced_count}`,
+    s.url_count != null ? `${s.url_count} 个 URL` : `已同步 ${s.synced_count}`,
     s.last_sync_at ? `上次 ${s.last_sync_at.slice(5, 19)}` : "",
   ].filter(Boolean);
   const syncBtn = off
@@ -369,9 +485,10 @@ function subCard(s) {
         </div>
       </div>
       <div class="sub-ops">
-        <label class="sub-toggle" title="定时同步开关">
+        <label class="switch sub-toggle" title="定时同步开关">
           <input type="checkbox" data-tgl="${esc(s.kb_id)}" data-platform="${esc(s.platform)}" ${s.enabled ? "checked" : ""} ${off ? "disabled" : ""} />
-          <span>定时</span>
+          <span class="track"></span>
+          <span>定时同步</span>
         </label>
         ${syncBtn}
       </div>

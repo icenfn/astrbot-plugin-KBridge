@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import html as html_lib
+import uuid
 import logging
 import re
 import time
@@ -34,6 +35,8 @@ logger = logging.getLogger("astrbot")
 KV_SUBS = "kbridge_subs"
 KV_INDEX = "kbridge_index"
 KV_SCHED_LOGS = "kbridge_sched_logs"
+KV_URL2KB_GROUPS = "kbridge_url2kb_groups"
+URL2KB_PREFIX = "ur2:"  # url2kb 增量索引前缀（分组内 url id）
 MAX_SCHED_LOGS = 100  # 定时同步日志环形上限
 DEFAULT_GITHUB_MIRROR = "https://gh.dpik.top/"  # Raw 加速镜像默认值
 
@@ -184,6 +187,7 @@ class SyncManager:
             "ima": bool(pe.get("ima", True)),
             "youdao": bool(pe.get("youdao", True)),
             "github": bool(pe.get("github", True)),
+            "url2kb": bool(pe.get("url2kb", True)),
         }
 
     def _check_platform_enabled(self, platform: str) -> None:
@@ -396,6 +400,139 @@ class SyncManager:
             await self._save_subs(subs)
         return sub
 
+    # ---------- url2kb：网页分组 -> AstrBot 知识库 ----------
+
+    async def get_url2kb_groups(self) -> list[dict[str, Any]]:
+        """读取 url2kb 分组列表：[{id, name, note, urls:[{id,title,url}]}]。"""
+        raw = await self.star.get_kv_data(KV_URL2KB_GROUPS, []) or []
+        return raw if isinstance(raw, list) else []
+
+    async def save_url2kb_groups(self, groups: list[dict[str, Any]]) -> None:
+        await self.star.put_kv_data(KV_URL2KB_GROUPS, groups)
+
+    async def url2kb_add_group(self, name: str, note: str = "") -> dict[str, Any]:
+        groups = await self.get_url2kb_groups()
+        g = {
+            "id": str(uuid.uuid4()),
+            "name": (name or "").strip(),
+            "note": (note or "").strip(),
+            "urls": [],
+        }
+        groups.append(g)
+        await self.save_url2kb_groups(groups)
+        await self.ensure_url2kb_subs()
+        return g
+
+    async def url2kb_update_group(self, gid: str, name: str, note: str) -> bool:
+        groups = await self.get_url2kb_groups()
+        for g in groups:
+            if str(g.get("id")) == gid:
+                if name is not None:
+                    g["name"] = (name or "").strip()
+                if note is not None:
+                    g["note"] = (note or "").strip()
+                await self.save_url2kb_groups(groups)
+                await self.ensure_url2kb_subs()
+                return True
+        return False
+
+    async def url2kb_remove_group(self, gid: str) -> bool:
+        groups = await self.get_url2kb_groups()
+        new = [g for g in groups if str(g.get("id")) != gid]
+        if len(new) == len(groups):
+            return False
+        await self.save_url2kb_groups(new)
+        await self.ensure_url2kb_subs()
+        return True
+
+    async def url2kb_add_url(self, gid: str, url: str) -> tuple[bool, str]:
+        """添加 URL 到分组；自动识别网页标题（识别失败返回 '' 由调用方回退 URL）。"""
+        url = (url or "").strip()
+        if not url:
+            return False, ""
+        groups = await self.get_url2kb_groups()
+        for g in groups:
+            if str(g.get("id")) != gid:
+                continue
+            title = ""
+            try:
+                title = await self.url2kb_detect_title(url)
+            except Exception:  # noqa: BLE001
+                title = ""
+            g.setdefault("urls", []).append(
+                {"id": str(uuid.uuid4()), "title": title or "", "url": url}
+            )
+            await self.save_url2kb_groups(groups)
+            return True, title
+        return False, ""
+
+    async def url2kb_remove_url(self, gid: str, uid: str) -> bool:
+        groups = await self.get_url2kb_groups()
+        for g in groups:
+            if str(g.get("id")) != gid:
+                continue
+            urls = [u for u in g.get("urls") or [] if str(u.get("id")) != uid]
+            if len(urls) == len(g.get("urls") or []):
+                return False
+            g["urls"] = urls
+            await self.save_url2kb_groups(groups)
+            return True
+        return False
+
+    async def url2kb_detect_title(self, url: str) -> str:
+        """抓取网页 <title> 识别标题（失败返回空字符串）。"""
+        timeout = aiohttp.ClientTimeout(total=20)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers, allow_redirects=True) as resp:
+                if resp.status != 200:
+                    return ""
+                raw = await resp.read()
+                if len(raw) > 2 * 1024 * 1024:
+                    return ""
+                html = raw.decode("utf-8", errors="ignore")
+        m = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.S)
+        if not m:
+            return ""
+        title = _html_to_markdown(m.group(1)).strip()
+        return title[:80]
+
+    async def ensure_url2kb_subs(self) -> list[dict[str, Any]]:
+        """url2kb 分组即同步源：按分组自动补全/同步/清理订阅（分组名 = AstrBot 知识库名）。"""
+        groups = await self.get_url2kb_groups()
+        subs = await self.get_subs()
+        existing = {(s.platform, s.kb_id): s for s in subs}
+        valid: set[str] = set()
+        changed = False
+        for g in groups:
+            gid = str(g.get("id") or "")
+            if not gid:
+                continue
+            valid.add(gid)
+            name = str(g.get("name") or "").strip() or "url2kb"
+            key = ("url2kb", gid)
+            if key not in existing:
+                subs.append(
+                    Subscription(
+                        kb_id=gid, kb_name=name, target_kb=name, platform="url2kb"
+                    )
+                )
+                changed = True
+            else:
+                s = existing[key]
+                if s.target_kb != name or s.kb_name != name:
+                    s.target_kb = name
+                    s.kb_name = name
+                    changed = True
+        # 分组已删除的残留订阅一并清理
+        stale = [s for s in subs if s.platform == "url2kb" and s.kb_id not in valid]
+        if stale:
+            subs = [s for s in subs if not (s.platform == "url2kb" and s.kb_id not in valid)]
+            changed = True
+        if changed:
+            await self._save_subs(subs)
+        return groups
+
     async def resolve_target_kb(self, sub: Subscription):
         """解析/创建目标 AstrBot 知识库，返回 (KBHelper, name, recreated)。
 
@@ -523,6 +660,8 @@ class SyncManager:
                 await self._sync_youdao(sub, result)
             elif sub.platform == "github":
                 await self._sync_github(sub, result)
+            elif sub.platform == "url2kb":
+                await self._sync_url2kb(sub, result)
             else:
                 await self._sync_ima(sub, result)
             sub.synced_count = await self._count_index(sub.kb_id)
@@ -851,6 +990,75 @@ class SyncManager:
             if any(isinstance(x, _SyncCancelled) for x in ret):
                 raise _SyncCancelled()
         await self._save_index()
+
+    async def _sync_url2kb(self, sub: Subscription, result: SyncResult) -> None:
+        """url2kb 同步：分组内全部 URL 抓取网页 -> Markdown 入库。
+
+        分组名即 AstrBot 知识库名；增量索引 key 为 ur2:{url_id}。
+        """
+        kb, kb_name, recreated = await self.resolve_target_kb(sub)
+        index = await self._get_index()
+        kb_index = index.setdefault(sub.kb_id, {})
+        if recreated:
+            kb_index.clear()  # 知识库刚重建，旧索引失效，全量重同步
+        groups = await self.get_url2kb_groups()
+        group = next((g for g in groups if str(g.get("id")) == sub.kb_id), None)
+        urls = list((group or {}).get("urls") or [])
+        result.total = len(urls)
+
+        for u in urls:
+            if self.cancel_requested:
+                raise _SyncCancelled()
+            uid = str(u.get("id") or "")
+            key = f"{URL2KB_PREFIX}{uid}"
+            if not uid or key in kb_index:
+                result.skipped += 1
+                continue
+            url = str(u.get("url") or "").strip()
+            title = str(u.get("title") or "").strip() or url
+            if not url:
+                result.skipped += 1
+                continue
+            try:
+                text = await self._fetch_web_md(url)
+                if not text.strip():
+                    kb_index[key] = {"doc_id": "", "title": title, "skipped": "empty"}
+                    result.skipped += 1
+                    result.skip_counts["empty"] = result.skip_counts.get("empty", 0) + 1
+                    continue
+                async with self._upload_semaphore():  # 全局串行入库，防 OOM
+                    if self.cancel_requested:
+                        raise _SyncCancelled()
+                    doc = await kb.upload_document(
+                        file_name=f"{_sanitize_filename(title)}.md",
+                        file_content=text.encode("utf-8"),
+                        file_type="md",
+                    )
+                kb_index[key] = {
+                    "doc_id": doc.doc_id,
+                    "title": title,
+                    "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                result.synced += 1
+            except _SyncCancelled:
+                raise
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning(f"[KBridge] url2kb 条目失败 {title}: {e}")
+                result.failed += 1
+                result.errors.append(f"{title}: {e}")
+        await self._save_index()
+
+    async def _fetch_web_md(self, url: str) -> str:
+        """抓取网页正文并转为纯文本 Markdown。"""
+        timeout = aiohttp.ClientTimeout(total=30)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers, allow_redirects=True) as resp:
+                resp.raise_for_status()
+                raw = await resp.read()
+                if len(raw) > 5 * 1024 * 1024:
+                    raise ValueError("网页超过 5MB 限制")
+                return _html_to_markdown(raw.decode("utf-8", errors="ignore"))
 
     async def sync_all(self) -> list[SyncResult]:
         """同步全部同步源（防重入：已有同步在跑时直接返回空结果）。"""

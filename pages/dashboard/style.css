@@ -545,22 +545,49 @@ svg { width: 18px; height: 18px; flex: none; }
 .sub-line2 .sep { color: var(--border); }
 
 /* 定时同步开关（与同步按钮同一行） */
-.sub-toggle {
+/* 通用 switch 开关（定时同步等），保持 34x18 固定尺寸不撑乱布局 */
+.switch {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   font-size: 12px;
   color: var(--dim);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
+  position: relative;
+  flex: none;
 }
-.sub-toggle input {
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch .track {
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
+  background: #cbd2dc;
+  position: relative;
+  transition: background 0.2s;
+  flex: none;
+}
+.switch .track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
   width: 14px;
   height: 14px;
-  accent-color: var(--good);
-  cursor: pointer;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.2s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
+.switch input:checked + .track { background: var(--primary); }
+.switch input:checked + .track::after { left: 18px; }
+.switch input:disabled + .track { opacity: 0.45; cursor: not-allowed; }
 .sub-line2 .dim { color: var(--dim); }
 .sub-ops { display: flex; align-items: center; gap: 8px; flex: none; }
 .empty-state {
@@ -877,3 +904,27 @@ svg { width: 18px; height: 18px; flex: none; }
   padding: 16px;
   box-shadow: var(--shadow);
 }
+
+/* url2kb 分组管理 */
+.u2k-group {
+  background: var(--panel2, rgba(127, 127, 127, 0.06));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.u2k-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.u2k-name-i { flex: 1; }
+.u2k-note-i { width: 100%; margin-bottom: 8px; }
+.u2k-urls { display: flex; flex-direction: column; gap: 6px; }
+.u2k-url {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--panel, rgba(0, 0, 0, 0.03));
+  min-width: 0;
+}
+.u2k-title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: none; max-width: 45%; }
+.u2k-url2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }

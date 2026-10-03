@@ -181,6 +181,9 @@ class KBridge(Star):
             (f"/{PLUGIN_NAME}/schedule/clear", self.api_schedule_clear, ["POST"], "清空同步日志"),
             (f"/{PLUGIN_NAME}/config", self.api_config_get, ["GET"], "读取平台配置"),
             (f"/{PLUGIN_NAME}/config", self.api_config_save, ["POST"], "保存平台配置"),
+            (f"/{PLUGIN_NAME}/url2kb", self.api_url2kb_get, ["GET"], "url2kb 分组列表"),
+            (f"/{PLUGIN_NAME}/url2kb/groups", self.api_url2kb_groups, ["POST"], "url2kb 分组增删改"),
+            (f"/{PLUGIN_NAME}/url2kb/urls", self.api_url2kb_urls, ["POST"], "url2kb URL 增删"),
         ]
         for route, handler, methods, desc in routes:
             self.context.register_web_api(route, handler, methods, desc)
@@ -231,6 +234,12 @@ class KBridge(Star):
                             },
                         ],
                     },
+                    "url2kb": {
+                        "name": "url2kb",
+                        "supported": True,
+                        "enabled": enabled.get("url2kb", True),
+                        "fields": [],
+                    },
                 },
                 "values": {
                     "ima_client_id": (self.config.get("ima_client_id") or "").strip(),
@@ -274,7 +283,7 @@ class KBridge(Star):
         if isinstance(pe, dict):
             cur = self.manager.platform_enabled()
             for p, v in pe.items():
-                if p in ("ima", "youdao", "github"):
+                if p in ("ima", "youdao", "github", "url2kb"):
                     cur[p] = bool(v)
             self.config["platform_enabled"] = cur
             saved.append("platform_enabled")
@@ -293,6 +302,61 @@ class KBridge(Star):
         return json_response({"saved": saved})
 
     @webapi_handler
+    async def api_url2kb_get(self):
+        """url2kb 分组列表（含每组 url）。"""
+        return json_response({"groups": await self.manager.get_url2kb_groups()})
+
+    @webapi_handler
+    async def api_url2kb_groups(self):
+        """分组管理：action = add / update / remove。"""
+        payload = await request.json(default={})
+        action = str(payload.get("action") or "").strip()
+        gid = str(payload.get("id") or "").strip()
+        if action == "add":
+            name = str(payload.get("name") or "").strip()
+            if not name:
+                return error_response("分组名称（AstrBot 知识库名）必填", status_code=400)
+            g = await self.manager.url2kb_add_group(name, str(payload.get("note") or ""))
+            return json_response({"group": g})
+        if action == "update":
+            ok = await self.manager.url2kb_update_group(
+                gid,
+                str(payload.get("name") or ""),
+                str(payload.get("note") or ""),
+            )
+            if not ok:
+                return error_response("分组不存在", status_code=404)
+            return json_response({"ok": True})
+        if action == "remove":
+            ok = await self.manager.url2kb_remove_group(gid)
+            if not ok:
+                return error_response("分组不存在", status_code=404)
+            return json_response({"ok": True})
+        return error_response("未知操作", status_code=400)
+
+    @webapi_handler
+    async def api_url2kb_urls(self):
+        """URL 管理：action = add / remove；添加时自动识别网页标题。"""
+        payload = await request.json(default={})
+        action = str(payload.get("action") or "").strip()
+        gid = str(payload.get("group_id") or "").strip()
+        if action == "add":
+            url = str(payload.get("url") or "").strip()
+            if not url:
+                return error_response("URL 必填", status_code=400)
+            ok, title = await self.manager.url2kb_add_url(gid, url)
+            if not ok:
+                return error_response("分组不存在", status_code=404)
+            return json_response({"ok": True, "title": title})
+        if action == "remove":
+            uid = str(payload.get("url_id") or "").strip()
+            ok = await self.manager.url2kb_remove_url(gid, uid)
+            if not ok:
+                return error_response("URL 不存在", status_code=404)
+            return json_response({"ok": True})
+        return error_response("未知操作", status_code=400)
+
+    @webapi_handler
     async def api_stats(self):
         subs = await self.manager.get_subs()
         enabled = self.manager.platform_enabled()
@@ -301,7 +365,23 @@ class KBridge(Star):
             and enabled.get("ima", True),
             "youdao": bool(self.config.get("youdao_api_key")) and enabled.get("youdao", True),
             "github": bool(self.config.get("github_token")) and enabled.get("github", True),
+            "url2kb": True and enabled.get("url2kb", True),
         }
+        # 定时同步概览（供总览页定时块展示）
+        sec = int(self.config.get("schedule_interval") or 0)
+        sched_on = bool(self.config.get("schedule_enabled")) and sec > 0
+        d, r = divmod(max(sec, 0), 86400)
+        h, r = divmod(r, 3600)
+        m, s2 = divmod(r, 60)
+        parts = []
+        if d:
+            parts.append(f"{d} 天")
+        if h:
+            parts.append(f"{h} 时")
+        if m:
+            parts.append(f"{m} 分")
+        if s2:
+            parts.append(f"{s2} 秒")
         return json_response(
             {
                 "sub_count": len(subs),
@@ -310,6 +390,10 @@ class KBridge(Star):
                 "current": self.manager.current_progress,
                 "configured": configured,
                 "ima_configured": configured["ima"],  # 兼容旧前端
+                "sched": {
+                    "enabled": sched_on,
+                    "text": "每 " + " ".join(parts) if parts and sched_on else "",
+                },
             }
         )
 
@@ -352,6 +436,25 @@ class KBridge(Star):
             row = s.to_dict()
             row["display_name"] = s.kb_name
             out.append(row)
+        # url2kb：分组即同步源（自动 ensure）
+        try:
+            groups = await self.manager.ensure_url2kb_subs()
+            subs = await self.manager.get_subs()
+            by_key = {(s.platform, s.kb_id): s for s in subs}
+            for g in groups:
+                gid = str(g.get("id") or "")
+                if not gid:
+                    continue
+                sub = by_key.get(("url2kb", gid))
+                if sub is None:
+                    continue
+                row = sub.to_dict()
+                row["display_name"] = g.get("name") or sub.kb_name
+                row["url_count"] = len(g.get("urls") or [])
+                out.append(row)
+        except Exception:  # noqa: BLE001
+            self.logger.exception("查询 url2kb 分组失败")
+            out.append({"error": True, "platform": "url2kb", "message": "查询失败，详见日志"})
 
         # 目标 AstrBot 知识库已删除时标记，页面显示「未同步」
         async def mark_missing(row: dict) -> None:
