@@ -66,6 +66,21 @@ def sub_key(parsed: dict[str, str]) -> str:
     return f"gh:{parsed['owner']}/{parsed['repo']}@{branch}:{path or '/'}"
 
 
+def sub_key_to_parsed(key: str) -> dict[str, str]:
+    """从同步源键（gh:owner/repo@branch:path）还原 {owner, repo, branch, path}。
+
+    与 sub_key 互为逆运算；同步时直接使用，避免从键重建 URL 产生歧义
+    （键中的 '@'、':' 不是合法 URL 路径分隔符）。
+    """
+    body = key.split(":", 1)[1] if ":" in key else key
+    owner_repo, _, rest = body.partition("@")
+    owner, _, repo = owner_repo.partition("/")
+    branch, _, path = rest.partition(":")
+    if branch == "default":
+        branch = ""  # default 为占位符，表示需查询仓库默认分支
+    return {"owner": owner, "repo": repo, "branch": branch, "path": path.strip("/")}
+
+
 def display_name(parsed: dict[str, str]) -> str:
     """页面/列表显示名。"""
     base = f"{parsed['owner']}/{parsed['repo']}"
@@ -113,9 +128,10 @@ class GitHubClient:
             raise GitHubError(f"GitHub API 网络错误: {e}") from e
 
     async def resolve_default_branch(self, parsed: dict[str, str]) -> str:
-        """补齐默认分支（branch 为空时查仓库信息）。"""
-        if parsed.get("branch"):
-            return parsed["branch"]
+        """补齐默认分支（branch 为空或为占位符 default 时查仓库信息）。"""
+        branch = (parsed.get("branch") or "").strip()
+        if branch and branch != "default":
+            return branch
         data = await self._api_get(f"{GITHUB_API}/repos/{parsed['owner']}/{parsed['repo']}")
         branch = data.get("default_branch") or "master"
         parsed["branch"] = branch

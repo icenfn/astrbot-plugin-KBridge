@@ -469,27 +469,30 @@ svg { width: 18px; height: 18px; flex: none; }
 }
 .add-row { display: flex; gap: 10px; flex-wrap: wrap; }
 
-.sub-list { display: flex; flex-direction: column; gap: 8px; }
-.sub-group { margin-bottom: 14px; }
+.sub-list { display: flex; flex-direction: column; gap: 6px; }
+.sub-group { margin-bottom: 12px; }
 .sub-group-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--dim);
-  padding: 2px 2px 8px;
+  padding: 2px 2px 6px;
 }
 .sub-card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 11px 14px;
+  border-radius: 10px;
+  padding: 9px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   box-shadow: var(--shadow);
 }
-.sub-name { font-weight: 600; font-size: 14px; }
+.sub-name { font-weight: 600; font-size: 13.5px; }
 .sub-line1 { display: flex; align-items: center; gap: 8px; }
+.sub-line2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; }
+.sub-line2 .sep { color: var(--border); }
+.sub-line2 .miss-hint { color: var(--danger); font-weight: 600; }
 
 /* 定时同步开关（卡片内） */
 .sub-toggle {
@@ -507,15 +510,6 @@ svg { width: 18px; height: 18px; flex: none; }
   height: 14px;
   accent-color: var(--good);
   cursor: pointer;
-}
-.sub-line2 {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 12px;
-  color: var(--text);
-  margin-top: 3px;
-  flex-wrap: wrap;
 }
 .sub-line2 .dim { color: var(--dim); }
 .sub-ops { display: flex; gap: 6px; flex: none; }
@@ -729,48 +723,89 @@ svg { width: 18px; height: 18px; flex: none; }
 }
 
 /* ---------- 定时同步 ---------- */
-.sched-panel { display: flex; flex-direction: column; gap: 16px; }
-.sched-config { display: flex; flex-direction: column; gap: 12px; }
+.sched-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+}
 .sched-interval {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
+  flex: 1;
+  min-width: 200px;
 }
-.sched-interval .input.num { width: 76px; }
+.sched-interval .input.num { width: 60px; padding: 6px 8px; }
+.sched-interval span { font-size: 12px; color: var(--dim); }
 .switch-label {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
 }
 .switch-label input {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   accent-color: var(--good);
   cursor: pointer;
 }
-.sched-logs { display: flex; flex-direction: column; gap: 8px; }
+.sched-logs { padding: 12px 14px; }
+.sched-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
 .sched-log-title { font-size: 13px; font-weight: 600; color: var(--dim); }
-.sched-log-list { display: flex; flex-direction: column; gap: 6px; max-height: 380px; overflow-y: auto; }
-.sched-log {
+.sched-log-stats { display: flex; gap: 10px; font-size: 11px; }
+.sched-log-stats .st { font-weight: 600; }
+.sched-log-stats .st.ok { color: var(--good); }
+.sched-log-stats .st.warn { color: var(--warn); }
+.sched-log-stats .st.err { color: var(--danger); }
+.sched-log-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  border-left: 3px solid var(--border);
-  background: var(--panel2);
-  border-radius: 8px;
-  padding: 8px 12px;
+  gap: 3px;
+  max-height: min(480px, 60vh);
+  overflow-y: auto;
 }
-.sched-log-t { font-size: 11px; color: var(--dim); font-family: ui-monospace, monospace; }
-.sched-log-msg { font-size: 13px; }
+.sched-log {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+}
+.sched-log-t {
+  flex: none;
+  width: 108px;
+  font-size: 11px;
+  color: var(--dim);
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+}
+.sched-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; align-self: center; background: var(--border); }
+.sched-log-msg { flex: 1; font-size: 12.5px; line-height: 1.45; word-break: break-all; }
 .sched-log.ok { border-left-color: var(--good); }
-.sched-log.ok .sched-log-msg { color: var(--good); }
+.sched-log.ok .sched-dot { background: var(--good); }
+.sched-log.ok .sched-log-msg { color: var(--text); }
 .sched-log.warn { border-left-color: var(--warn); }
+.sched-log.warn .sched-dot { background: var(--warn); }
 .sched-log.warn .sched-log-msg { color: var(--warn); }
 .sched-log.err { border-left-color: var(--danger); }
+.sched-log.err .sched-dot { background: var(--danger); }
 .sched-log.err .sched-log-msg { color: var(--danger); }
+.sched-log:hover { background: var(--panel); }
 
 /* ---------- 通用卡片 ---------- */
 .card {

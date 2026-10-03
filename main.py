@@ -359,6 +359,7 @@ class KBridge(Star):
         sub = await self.manager.add_subscription(
             kb_id=key,
             kb_name=display_name(parsed),
+            target_kb=parsed["repo"],
             platform="github",
         )
         self.logger.info(f"[KBridge] 添加 GitHub 仓库: {sub.kb_name} -> {key}")

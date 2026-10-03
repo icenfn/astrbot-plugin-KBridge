@@ -26,6 +26,7 @@ from .github_client import (
     IGNORE_SEGMENTS,
     parse_github_url,
     sub_key,
+    sub_key_to_parsed,
 )
 
 logger = logging.getLogger("astrbot")
@@ -657,7 +658,8 @@ class SyncManager:
         kb, kb_name = await self.resolve_target_kb(sub)
         index = await self._get_index()
         kb_index = index.setdefault(sub.kb_id, {})
-        parsed = parse_github_url(sub.kb_id.replace("gh:", "https://github.com/", 1))
+        # 直接从同步源键还原 parsed，避免 URL 重建歧义（kb_id 含 @/:/占位符）
+        parsed = sub_key_to_parsed(sub.kb_id)
 
         # 1. 获取完整文件树，过滤支持格式与忽略目录
         blobs = await client.get_tree(parsed)

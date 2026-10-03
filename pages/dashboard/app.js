@@ -312,6 +312,11 @@ function subCard(s) {
   const statusCls = missing ? "err" : s.last_status === "ok" ? "ok" : s.last_status === "error" ? "err" : "warn";
   const statusTitle = missing ? "目标知识库已删除，同步后将自动重建" : (s.last_error || "");
   const name = s.display_name || s.kb_name || s.kb_id || "未命名";
+  const meta = [
+    `已同步 ${s.synced_count}`,
+    s.last_sync_at ? `上次 ${s.last_sync_at.slice(5, 19)}` : "",
+  ].filter(Boolean);
+  const missingHint = missing ? `<span class="miss-hint">目标库已删除</span>` : "";
   return `
     <div class="sub-card">
       <div class="sub-main">
@@ -324,8 +329,8 @@ function subCard(s) {
           </label>
         </div>
         <div class="sub-line2">
-          <span class="dim">已同步 ${s.synced_count}</span>
-          <span class="dim">${s.last_sync_at ? `上次 ${s.last_sync_at}` : ""}</span>
+          ${missingHint}
+          ${meta.map((x) => `<span class="dim">${x}</span>`).join('<span class="sep">·</span>')}
         </div>
       </div>
       <div class="sub-ops">
@@ -455,6 +460,7 @@ function schedLogHtml(l) {
   const cls = l.level === "error" ? "err" : l.level === "warn" ? "warn" : "ok";
   return `<div class="sched-log ${cls}">
     <span class="sched-log-t">${esc(l.t)}</span>
+    <span class="sched-dot"></span>
     <span class="sched-log-msg">${esc(l.msg)}</span>
   </div>`;
 }
@@ -470,30 +476,37 @@ function renderSchedule() {
     root.innerHTML = `<div class="empty-state">加载定时同步配置失败 · 点击右上角刷新重试</div>`;
     return;
   }
+  const logs = d.logs || [];
+  const nOk = logs.filter((l) => l.level !== "error" && l.level !== "warn").length;
+  const nWarn = logs.filter((l) => l.level === "warn").length;
+  const nErr = logs.filter((l) => l.level === "error").length;
   root.innerHTML = `
-    <div class="sched-panel">
-      <div class="sched-config card">
-        <div class="pfield">
-          <label class="switch-label">
-            <input type="checkbox" id="sched-enabled" ${d.enabled ? "checked" : ""} />
-            <span>启用定时同步</span>
-          </label>
-        </div>
-        <div class="sched-interval">
-          <span class="dim">间隔</span>
-          <input class="input num" id="sched-d" type="number" min="0" value="${d.days}" /> <span>天</span>
-          <input class="input num" id="sched-h" type="number" min="0" value="${d.hours}" /> <span>小时</span>
-          <input class="input num" id="sched-m" type="number" min="0" value="${d.minutes}" /> <span>分</span>
-          <input class="input num" id="sched-s" type="number" min="0" value="${d.seconds}" /> <span>秒</span>
-        </div>
-        <p class="add-hint dim">按间隔自动同步「同步管理」中已开启「定时」的知识库</p>
-        <button class="btn primary" id="sched-save">保存设置</button>
+    <div class="sched-bar card">
+      <label class="switch-label" title="启用后按间隔自动同步已开启「定时」的同步源">
+        <input type="checkbox" id="sched-enabled" ${d.enabled ? "checked" : ""} />
+        <span>${d.enabled ? "定时同步已启用" : "定时同步已关闭"}</span>
+      </label>
+      <div class="sched-interval">
+        <span class="dim">间隔</span>
+        <input class="input num" id="sched-d" type="number" min="0" value="${d.days}" /><span>天</span>
+        <input class="input num" id="sched-h" type="number" min="0" value="${d.hours}" /><span>时</span>
+        <input class="input num" id="sched-m" type="number" min="0" value="${d.minutes}" /><span>分</span>
+        <input class="input num" id="sched-s" type="number" min="0" value="${d.seconds}" /><span>秒</span>
       </div>
-      <div class="sched-logs card">
-        <div class="sched-log-title">自动同步日志</div>
-        <div class="sched-log-list">
-          ${d.logs && d.logs.length ? d.logs.map(schedLogHtml).join("") : `<div class="empty-state small">暂无日志</div>`}
-        </div>
+      <button class="btn primary" id="sched-save">保存</button>
+    </div>
+    <div class="sched-logs card">
+      <div class="sched-log-head">
+        <span class="sched-log-title">自动同步日志</span>
+        <span class="sched-log-stats">
+          <span class="dim">共 ${logs.length}</span>
+          <span class="st ok">${nOk} 成功</span>
+          <span class="st warn">${nWarn} 警告</span>
+          <span class="st err">${nErr} 失败</span>
+        </span>
+      </div>
+      <div class="sched-log-list">
+        ${logs.length ? logs.map(schedLogHtml).join("") : `<div class="empty-state small">暂无日志</div>`}
       </div>
     </div>`;
   $("sched-save").onclick = async () => {
