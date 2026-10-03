@@ -28,6 +28,33 @@ const ICONS = {
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
 };
 
+function confirmDialog({ title, message, okText = "确认删除", danger = true }) {
+  return new Promise((resolve) => {
+    const ov = document.createElement("div");
+    ov.className = "modal-overlay";
+    ov.innerHTML = `<div class="modal confirm-modal">
+      <div class="modal-head"><span class="modal-title"></span><button class="modal-x" aria-label="关闭">×</button></div>
+      <div class="confirm-body">
+        <div class="confirm-msg"></div>
+        <div class="confirm-ops">
+          <button class="btn" data-c="no">取消</button>
+          <button class="btn ${danger ? "danger" : "primary"}" data-c="yes"></button>
+        </div>
+      </div>
+    </div>`;
+    document.body.appendChild(ov);
+    const done = (v) => { ov.remove(); resolve(v); };
+    ov.querySelector(".modal-title").textContent = title;
+    ov.querySelector(".confirm-msg").textContent = message;
+    ov.querySelector('[data-c="yes"]').textContent = okText;
+    ov.querySelector('[data-c="no"]').onclick = () => done(false);
+    ov.querySelector('[data-c="yes"]').onclick = () => done(true);
+    ov.querySelector(".modal-x").onclick = () => done(false);
+    ov.addEventListener("click", (e) => { if (e.target === ov) done(false); });
+    requestAnimationFrame(() => ov.classList.add("open"));
+  });
+}
+
 function toast(message, type = "ok") {
   // type: ok(info 蓝) / success(绿) / error(红) / warn(橙)
   const wrap = $("toast-wrap");
@@ -301,6 +328,12 @@ async function openPlatformConfig(id) {
         }
       };
       const rmRepo = async (kbId) => {
+        const ok = await confirmDialog({
+          title: "删除仓库订阅",
+          message: `确认移除仓库订阅「${kbId}」？其已同步到 AstrBot 的本地知识库数据不受影响。`,
+          okText: "删除",
+        });
+        if (!ok) return;
         try {
           const r = await bridge.apiPost("subs/remove", { kb_id: kbId, platform: "github" });
           toast(`已删除仓库：${r.name}`, "success");
@@ -479,7 +512,7 @@ function subCard(s) {
           partial: "部分失败",
           cancelled: "已取消",
           pending: "待同步",
-        }[s.last_status] || s.last_status);
+        }[s.last_status] || s.last_status || "未同步");
   const statusCls = syncingThis ? "soon" : missing ? "err" : s.last_status === "ok" ? "ok" : s.last_status === "error" ? "err" : "warn";
   const statusTitle = missing ? "目标知识库已删除，同步时将自动重建" : (s.last_error || "");
   const name = s.display_name || s.kb_name || s.kb_id || "未命名";
@@ -512,7 +545,7 @@ function subCard(s) {
           <span>定时同步</span>
         </label>
         ${syncBtn}
-        <button class="btn small danger sub-dellocal" data-del="${esc(s.kb_id)}" data-platform="${esc(s.platform)}" title="删除已同步到 AstrBot 的本地知识库（订阅保留）">${ICONS.trash}删除本地</button>
+        <button class="btn small danger sub-dellocal" data-del="${esc(s.kb_id)}" data-dname="${esc(name)}" data-platform="${esc(s.platform)}" title="删除已同步到 AstrBot 的本地知识库（订阅保留）">${ICONS.trash}删除本地</button>
       </div>
     </div>`;
 }
@@ -572,6 +605,12 @@ function renderSubs() {
   });
   root.querySelectorAll("[data-del]").forEach((b) => {
     b.onclick = async () => {
+      const ok = await confirmDialog({
+        title: "删除本地知识库",
+        message: `确认删除「${b.dataset.dname || b.dataset.del}」已同步到 AstrBot 的本地知识库数据？订阅将保留，可随时重新同步。`,
+        okText: "删除",
+      });
+      if (!ok) return;
       try {
         const r = await bridge.apiPost("subs/delete-local", { kb_id: b.dataset.del, platform: b.dataset.platform || "ima" });
         toast(`已删除本地知识库：${r.name}`, "success");

@@ -729,6 +729,10 @@ svg { width: 18px; height: 18px; flex: none; }
 .modal-overlay.full.open .modal.full { transform: none; }
 .modal.full .modal-head { padding: 14px 18px; }
 .modal.full .modal-title { font-size: 16px; }
+.modal.confirm-modal { width: min(360px, calc(100% - 32px)); border-radius: 14px; }
+.confirm-body { padding: 16px 20px 20px; }
+.confirm-msg { font-size: 13.5px; line-height: 1.55; margin-bottom: 16px; word-break: break-all; }
+.confirm-ops { display: flex; justify-content: flex-end; gap: 8px; }
 .full-body {
   padding: 20px 24px;
   overflow-y: auto;

@@ -431,11 +431,12 @@ class KBridge(Star):
             row["display_name"] = sub.target_kb or sub.kb_name or "YoudaoNote"
             out.append(row)
         # GitHub：手动添加的仓库订阅（不做自动补全）
+        # 标题显示目标本地 AstrBot 知识库名（repo 名），而非完整仓库路径
         for s in subs:
             if s.platform != "github":
                 continue
             row = s.to_dict()
-            row["display_name"] = s.kb_name
+            row["display_name"] = s.target_kb or s.kb_name
             out.append(row)
         # url2kb：分组即同步源（自动 ensure）
         try:
