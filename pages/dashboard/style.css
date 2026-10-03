@@ -477,8 +477,6 @@ svg { width: 18px; height: 18px; flex: none; }
   .sub-card { flex-direction: column; align-items: flex-start; }
   .sub-main { width: 100%; max-width: 100%; }
   .sub-ops { width: 100%; }
-  .sub-ops .btn { flex: 1; justify-content: center; min-width: 0; }
-  .sub-ops .btn.sub-dellocal { flex: 0 1 auto; }
   .sched-bar #sched-save { flex: 1; justify-content: center; }
   .add-row .btn { flex: 1; justify-content: center; }
   #toast-wrap { left: 18px; right: 18px; }
@@ -592,9 +590,19 @@ svg { width: 18px; height: 18px; flex: none; }
 .switch input:checked + .track::after { left: 18px; }
 .switch input:disabled + .track { opacity: 0.45; cursor: not-allowed; }
 .sub-line2 .dim { color: var(--dim); }
-.sub-ops { display: flex; align-items: center; gap: 8px; flex: none; flex-wrap: wrap; row-gap: 6px; justify-content: flex-end; }
-.switch > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 92px; }
-.sub-dellocal { flex: 0 1 auto; }
+/* 同步列表操作区：开关 / 同步 / 删除 三列 1:1:1 等宽 */
+.sub-ops {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.sub-ops .switch { width: 100%; justify-content: center; }
+.sub-ops .btn { width: 100%; justify-content: center; padding: 8px 6px; }
+.switch > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: none; }
+.sub-dellocal { width: 100%; }
 .empty-state {
   text-align: center;
   color: var(--dim);
@@ -781,8 +789,6 @@ svg { width: 18px; height: 18px; flex: none; }
   .sub-card { flex-direction: column; align-items: flex-start; }
   .sub-main { width: 100%; max-width: 100%; }
   .sub-ops { width: 100%; }
-  .sub-ops .btn { flex: 1; justify-content: center; min-width: 0; }
-  .sub-ops .btn.sub-dellocal { flex: 0 1 auto; }
   .sched-bar #sched-save { flex: 1; justify-content: center; }
   .add-row .btn { flex: 1; justify-content: center; }
   #toast-wrap { left: 18px; right: 18px; }
