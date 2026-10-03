@@ -795,7 +795,7 @@ svg { width: 18px; height: 18px; flex: none; }
   border-radius: 10px;
   padding: 8px 0;
   max-height: 420px;
-  overflow-y: auto;
+  overflow: auto;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 .console-line {
@@ -805,10 +805,11 @@ svg { width: 18px; height: 18px; flex: none; }
   padding: 3px 14px;
   font-size: 12px;
   line-height: 1.55;
+  min-width: max-content;
 }
 .console-line .ct { color: #5b6b85; flex: none; }
 .console-line .cb { flex: none; width: 46px; font-weight: 700; }
-.console-line .cm { flex: 1; word-break: break-all; white-space: pre-wrap; }
+.console-line .cm { flex: 1; white-space: nowrap; }
 .console-line.ok .cb { color: #34d399; }
 .console-line.ok .cm { color: #d1fae5; }
 .console-line.warn .cb { color: #fbbf24; }

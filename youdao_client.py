@@ -122,7 +122,7 @@ class YoudaoClient:
 
     def _post(self, body: dict) -> int:
         """阻塞 POST 到 message endpoint（响应经 SSE 流回推，不读 body）。"""
-        conn = self._connect(timeout=30)
+        conn = self._connect(timeout=120)
         try:
             conn.request(
                 "POST",
@@ -138,7 +138,7 @@ class YoudaoClient:
         finally:
             conn.close()
 
-    async def _call(self, method: str, params: dict, timeout: float = 30.0) -> str:
+    async def _call(self, method: str, params: dict, timeout: float = 120.0) -> str:
         """发 JSON-RPC 请求并等待 SSE 回推响应，返回工具结果 text。"""
         await self.ensure_connected()
         await self._ensure_initialized()
@@ -158,7 +158,7 @@ class YoudaoClient:
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 if attempt < 2:
-                    await asyncio.sleep(1.0 * (attempt + 1))
+                    await asyncio.sleep(2.0 * (attempt + 1))
                     continue
                 raise YoudaoError(0, f"MCP 请求失败: {e}") from e
             if status not in (200, 202):
@@ -219,7 +219,7 @@ class YoudaoClient:
         )
         self._initialized = True
 
-    async def _request_raw(self, method: str, params: dict, timeout: float = 30.0) -> dict:
+    async def _request_raw(self, method: str, params: dict, timeout: float = 120.0) -> dict:
         """低层请求：发 JSON-RPC 并等待响应（用于 initialize 等）。"""
         last_err: Exception | None = None
         for attempt in range(3):
@@ -237,7 +237,7 @@ class YoudaoClient:
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 if attempt < 2:
-                    await asyncio.sleep(1.0 * (attempt + 1))
+                    await asyncio.sleep(2.0 * (attempt + 1))
                     continue
                 raise YoudaoError(0, f"MCP 请求失败: {e}") from e
             if status not in (200, 202):

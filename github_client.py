@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
@@ -90,8 +91,9 @@ def display_name(parsed: dict[str, str]) -> str:
 
 
 class GitHubClient:
-    def __init__(self, token: str = ""):
+    def __init__(self, token: str = "", raw_mirror: str = ""):
         self._token = (token or "").strip()
+        self._raw_mirror = (raw_mirror or "").strip().rstrip("/")
         self._session: aiohttp.ClientSession | None = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -154,21 +156,49 @@ class GitHubClient:
         """下载文件原始内容。返回 (bytes, 实际扩展名)。
 
         relpath 为相对同步子目录的路径（tree 模式），URL 由
-        branch + parsed.path + relpath 拼接。
+        branch + parsed.path + relpath 拼接；配置了 Raw 加速镜像
+        （github_raw_mirror）时走镜像前缀，网络类错误自动重试 2 次。
         """
         branch = await self.resolve_default_branch(parsed)
         prefix = (parsed.get("path") or "").strip("/")
         full = f"{prefix}/{relpath}".strip("/") if prefix else relpath
-        url = f"{RAW_HOST}/{parsed['owner']}/{parsed['repo']}/{branch}/{full}"
+        host = self._raw_mirror or RAW_HOST
+        url = f"{host}/{parsed['owner']}/{parsed['repo']}/{branch}/{full}"
+        ext = relpath.rsplit(".", 1)[-1].lower() if "." in relpath else ""
+        last_err: Exception | None = None
+        for attempt in range(3):
+            session = await self._get_session()
+            try:
+                async with session.get(url, headers=self._headers(accept_raw=True)) as resp:
+                    if resp.status == 404 and self._raw_mirror:
+                        # 镜像未收录该文件时回退官方源
+                        return await self._fallback_raw(parsed, full)
+                    if resp.status != 200:
+                        raise GitHubError(f"raw 下载失败: {relpath} (HTTP {resp.status})", resp.status)
+                    data = await resp.read()
+                    if len(data) > 200 * 1024 * 1024:
+                        raise GitHubError(f"文件超过 200MB 限制: {relpath}")
+                    return data, ext
+            except aiohttp.ClientError as e:
+                last_err = e
+                if attempt < 2:
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                    continue
+            except GitHubError as e:
+                if resp.status in (403, 429, 502, 503) and attempt < 2:
+                    last_err = e
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                    continue
+                raise
+        raise GitHubError(f"raw 下载网络错误: {relpath}: {last_err}") from last_err
+
+    async def _fallback_raw(self, parsed: dict[str, str], full: str) -> tuple[bytes, str]:
+        """镜像 404 时回退官方 raw 源下载。"""
+        url = f"{RAW_HOST}/{parsed['owner']}/{parsed['repo']}/{parsed.get('branch', '')}/{full}"
         session = await self._get_session()
-        try:
-            async with session.get(url, headers=self._headers(accept_raw=True)) as resp:
-                if resp.status != 200:
-                    raise GitHubError(f"raw 下载失败: {relpath} (HTTP {resp.status})", resp.status)
-                data = await resp.read()
-                if len(data) > 200 * 1024 * 1024:
-                    raise GitHubError(f"文件超过 200MB 限制: {relpath}")
-                ext = relpath.rsplit(".", 1)[-1].lower() if "." in relpath else ""
-                return data, ext
-        except aiohttp.ClientError as e:
-            raise GitHubError(f"raw 下载网络错误: {relpath}: {e}") from e
+        async with session.get(url, headers=self._headers(accept_raw=True)) as resp:
+            if resp.status != 200:
+                raise GitHubError(f"raw 下载失败: {full} (HTTP {resp.status})", resp.status)
+            data = await resp.read()
+            ext = full.rsplit(".", 1)[-1].lower() if "." in full else ""
+            return data, ext

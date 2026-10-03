@@ -29,6 +29,12 @@
     "default": "",
     "secret": true
   },
+  "github_raw_mirror": {
+    "description": "GitHub Raw 加速镜像前缀（可选；如 https://ghfast.top/ ，用于 raw 文件下载加速，留空使用官方 raw.githubusercontent.com）",
+    "type": "string",
+    "default": "",
+    "secret": false
+  },
   "max_concurrency": {
     "description": "同步下载并发数（建议 1-5，受 IMA 接口频控限制）",
     "type": "int",

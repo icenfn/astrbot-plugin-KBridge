@@ -535,11 +535,21 @@ function renderSchedule() {
           <span class="st warn">${nWarn} 警告</span>
           <span class="st err">${nErr} 失败</span>
         </span>
+        <button class="btn small" id="sched-clear">${ICONS.trash}清除日志</button>
       </div>
       <div class="sched-console">
         ${logs.length ? logs.map(schedLogHtml).join("") : `<div class="empty-state small">暂无日志</div>`}
       </div>
     </div>`;
+  $("sched-clear").onclick = async () => {
+    try {
+      await bridge.apiPost("schedule/clear");
+      toast("日志已清空", "success");
+      await loadScheduleData();
+    } catch (e) {
+      toast(e.message, "error");
+    }
+  };
   $("sched-save").onclick = async () => {
     const enabled = $("sched-enabled").checked;
     const days = parseInt($("sched-d").value || "0", 10) || 0;

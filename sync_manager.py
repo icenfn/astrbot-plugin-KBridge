@@ -185,7 +185,10 @@ class SyncManager:
             return self._youdao
         if platform == "github":
             if self._github is None:
-                self._github = GitHubClient((self.config.get("github_token") or "").strip())
+                self._github = GitHubClient(
+                    (self.config.get("github_token") or "").strip(),
+                    raw_mirror=(self.config.get("github_raw_mirror") or "").strip(),
+                )
             return self._github
         if self._client is None:
             client_id = (self.config.get("ima_client_id") or "").strip()
@@ -255,7 +258,6 @@ class SyncManager:
         sub = Subscription(kb_id=kb_id, kb_name=kb_name, target_kb=target_kb, platform=platform)
         subs.append(sub)
         await self._save_subs(subs)
-        self.logger.info(f"[KBridge] 拉取同步源: {kb_name} ({kb_id}) -> {target_kb or '自动创建'} [{platform}]")
         return sub
 
     async def remove_subscription(self, index: int) -> Subscription:
@@ -313,6 +315,10 @@ class SyncManager:
     async def get_schedule_logs(self) -> list[dict]:
         return await self.star.get_kv_data(KV_SCHED_LOGS, []) or []
 
+    async def clear_schedule_logs(self) -> None:
+        """清空定时同步日志。"""
+        await self.star.put_kv_data(KV_SCHED_LOGS, [])
+
     async def ensure_ima_subs(self) -> list[dict[str, Any]]:
         """确保 IMA 自建知识库均有对应同步源（页面直接展示，无需手动拉取）。
 
@@ -357,11 +363,12 @@ class SyncManager:
         return sub
 
     async def resolve_target_kb(self, sub: Subscription):
-        """解析/创建目标 AstrBot 知识库，返回 KBHelper 或抛错。
+        """解析/创建目标 AstrBot 知识库，返回 (KBHelper, name, recreated)。
 
         有道云目标库名取配置 youdao_target_kb（默认 YoudaoNote）；
         ima 与源同名；github 取仓库名。
         创建时自动选择可用的 Embedding 与 Rerank（重排序）Provider。
+        recreated=True 表示本次新建（原知识库被删除），旧增量索引全部失效。
         """
         kb_mgr = self.context.kb_manager
         if sub.platform == "youdao":
@@ -376,7 +383,7 @@ class SyncManager:
             name = sub.target_kb or sub.kb_name
         kb = await kb_mgr.get_kb_by_name(name)
         if kb:
-            return kb, name
+            return kb, name, False
         # 始终自动创建目标知识库（无 auto_create_kb 开关），并默认绑定重排序模型
         embedding_provider_id = await self._pick_embedding_provider_id()
         rerank_provider_id = await self._pick_rerank_provider_id()
@@ -391,9 +398,9 @@ class SyncManager:
             raise ValueError(f"创建知识库失败: {name}")
         if rerank_provider_id:
             self.logger.info(
-                f"[KBridge] 知识库 {name} 已绑定重排序模型: {rerank_provider_id}"
+                f"[KBridge] 知识库 {name} 已重建并绑定重排序模型: {rerank_provider_id}"
             )
-        return kb, name
+        return kb, name, True
 
     @staticmethod
     def _github_repo_name(kb_id: str) -> str:
@@ -533,9 +540,11 @@ class SyncManager:
     async def _sync_ima(self, sub: Subscription, result: SyncResult) -> None:
         """IMA 同步：递归遍历知识库（含文件夹）-> 逐个条目增量处理。"""
         client = await self.get_client("ima")
-        kb, kb_name = await self.resolve_target_kb(sub)
+        kb, kb_name, recreated = await self.resolve_target_kb(sub)
         index = await self._get_index()
         kb_index = index.setdefault(sub.kb_id, {})
+        if recreated:
+            kb_index.clear()  # 知识库刚重建，旧索引失效，全量重同步
 
         # 1. 递归收集全部叶子条目（media_type=99 的文件夹递归进入，目录本身不入库）
         items: list[dict[str, Any]] = []
@@ -625,9 +634,11 @@ class SyncManager:
         dir=true 条目 id）。笔记内容统一转为 Markdown 写入 AstrBot 知识库。
         """
         client = await self.get_client("youdao")
-        kb, kb_name = await self.resolve_target_kb(sub)
+        kb, kb_name, recreated = await self.resolve_target_kb(sub)
         index = await self._get_index()
         kb_index = index.setdefault(sub.kb_id, {})
+        if recreated:
+            kb_index.clear()  # 知识库刚重建，旧索引失效，全量重同步
 
         # 1. 递归收集全部笔记（防循环引用）
         notes: list[dict[str, Any]] = []
@@ -712,9 +723,11 @@ class SyncManager:
         kb_id 为规范化键（gh:owner/repo@branch:path）；tree 模式仅同步指定子目录。
         """
         client = await self.get_client("github")
-        kb, kb_name = await self.resolve_target_kb(sub)
+        kb, kb_name, recreated = await self.resolve_target_kb(sub)
         index = await self._get_index()
         kb_index = index.setdefault(sub.kb_id, {})
+        if recreated:
+            kb_index.clear()  # 知识库刚重建，旧索引失效，全量重同步
         # 直接从同步源键还原 parsed，避免 URL 重建歧义（kb_id 含 @/:/占位符）
         parsed = sub_key_to_parsed(sub.kb_id)
 

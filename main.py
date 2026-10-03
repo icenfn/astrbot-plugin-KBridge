@@ -163,6 +163,7 @@ class KBridge(Star):
         "youdao_api_key": "str",
         "youdao_target_kb": "str",
         "github_token": "str",
+        "github_raw_mirror": "str",
         "max_concurrency": "int",
     }
 
@@ -177,6 +178,7 @@ class KBridge(Star):
             (f"/{PLUGIN_NAME}/sync/cancel", self.api_cancel, ["POST"], "取消同步"),
             (f"/{PLUGIN_NAME}/schedule", self.api_schedule_get, ["GET"], "读取定时同步"),
             (f"/{PLUGIN_NAME}/schedule", self.api_schedule_save, ["POST"], "保存定时同步"),
+            (f"/{PLUGIN_NAME}/schedule/clear", self.api_schedule_clear, ["POST"], "清空同步日志"),
             (f"/{PLUGIN_NAME}/config", self.api_config_get, ["GET"], "读取平台配置"),
             (f"/{PLUGIN_NAME}/config", self.api_config_save, ["POST"], "保存平台配置"),
         ]
@@ -210,14 +212,19 @@ class KBridge(Star):
                         ],
                     },
                     "github": {
-                        "name": "GitHub Repository",
+                        "name": "Github",
                         "supported": True,
                         "fields": [
                             {
                                 "key": "github_token",
                                 "label": "GitHub Token（必填）",
                                 "secret": True,
-                            }
+                            },
+                            {
+                                "key": "github_raw_mirror",
+                                "label": "Raw 加速镜像（可选，如 https://ghfast.top/）",
+                                "secret": False,
+                            },
                         ],
                     },
                 },
@@ -228,6 +235,7 @@ class KBridge(Star):
                     "youdao_target_kb": (self.config.get("youdao_target_kb") or "").strip()
                     or "YoudaoNote",
                     "github_token": bool(self.config.get("github_token")),
+                    "github_raw_mirror": (self.config.get("github_raw_mirror") or "").strip(),
                 },
                 "common": {
                     "max_concurrency": int(self.config.get("max_concurrency", 3) or 3),
@@ -261,7 +269,7 @@ class KBridge(Star):
         for platform, keys in (
             ("ima", ("ima_client_id", "ima_api_key")),
             ("youdao", ("youdao_api_key",)),
-            ("github", ("github_token",)),
+            ("github", ("github_token", "github_raw_mirror")),
         ):
             if any(k in saved for k in keys):
                 await self.manager.reset_client(platform)
@@ -340,7 +348,6 @@ class KBridge(Star):
             row["kb_missing"] = kb is None
 
         await asyncio.gather(*(mark_missing(row) for row in out))
-        self.logger.info(f"[KBridge] 同步页知识库列表: {len(out)} 项")
         return json_response(out)
 
     @webapi_handler
@@ -354,7 +361,7 @@ class KBridge(Star):
         if not url:
             return error_response("缺少仓库 URL", status_code=400)
         if not (self.config.get("github_token") or "").strip():
-            return error_response("请先在「GitHub Repository 平台配置」中填写 GitHub Token（必填）", status_code=400)
+            return error_response("请先在「Github 平台配置」中填写 GitHub Token（必填）", status_code=400)
         try:
             parsed = parse_github_url(url)
         except GitHubError as e:
@@ -418,6 +425,13 @@ class KBridge(Star):
                 "logs": await self.manager.get_schedule_logs(),
             }
         )
+
+    @webapi_handler
+    async def api_schedule_clear(self):
+        """清空定时同步日志。"""
+        await self.manager.clear_schedule_logs()
+        self.logger.info("[KBridge] 已清空定时同步日志")
+        return json_response({"cleared": True})
 
     @webapi_handler
     async def api_schedule_save(self):
