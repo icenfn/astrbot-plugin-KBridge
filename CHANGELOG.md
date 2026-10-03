@@ -2,6 +2,12 @@
 
 本项目的所有显著变更按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 记录，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。版本与 `metadata.yaml` 保持一致。
 
+## [1.1.2] - 2026-10-04
+
+### Changed
+
+- 回滚同步列表操作区布局至 1:1:1 等宽（撤销 1:2:1 与删除按钮常显改动），保留删除按钮隐藏逻辑与 toast 原样
+
 ## [1.1.1] - 2026-10-03
 
 ### Removed
