@@ -4,8 +4,6 @@ const $ = (id) => document.getElementById(id);
 let pollTimer = null;
 let stats = null;
 let platformConfig = null;
-let kbsCache = [];
-let subsCache = [];
 let activeView = "overview";
 
 function esc(s) {
@@ -20,12 +18,9 @@ const VIEW_TITLES = {
 
 const ICONS = {
   sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>',
-  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>',
-  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>',
   link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></svg>',
   book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14z"/><path d="M20 17v4H6.5A2.5 2.5 0 0 1 4 18.5"/></svg>',
-  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
   bolt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z"/></svg>',
 };
 
@@ -48,33 +43,6 @@ function dismiss(el) {
   el.classList.remove("show");
   el.classList.add("out");
   setTimeout(() => el.remove(), 220);
-}
-
-function showConfirm({ title, message, danger = false, confirmText = "确认", extraHtml = "" }) {
-  return new Promise((resolve) => {
-    let overlay = document.getElementById("modal-overlay");
-    if (!overlay) {
-      overlay = document.createElement("div");
-      overlay.id = "modal-overlay";
-      overlay.className = "modal-overlay";
-      overlay.innerHTML = `<div class="modal">
-        <div class="modal-head"><span class="modal-title"></span><button class="modal-x" aria-label="关闭">×</button></div>
-        <div class="modal-body"></div>
-        <div class="modal-foot"><button class="btn" data-act="cancel">取消</button><button class="btn primary ${danger ? "danger" : ""}" data-act="ok">确认</button></div>
-      </div>`;
-      document.body.appendChild(overlay);
-      overlay.querySelector(".modal-x").onclick = () => { overlay.classList.remove("open"); resolve(false); };
-      overlay.querySelector('[data-act="cancel"]').onclick = () => { overlay.classList.remove("open"); resolve(false); };
-      overlay.addEventListener("click", (e) => { if (e.target === overlay) { overlay.classList.remove("open"); resolve(false); } });
-    }
-    overlay.querySelector(".modal-title").textContent = title;
-    const body = overlay.querySelector(".modal-body");
-    body.innerHTML = `<div class="modal-msg">${message}</div>${extraHtml}`;
-    const okBtn = overlay.querySelector('[data-act="ok"]');
-    okBtn.textContent = confirmText;
-    okBtn.onclick = () => { overlay.classList.remove("open"); resolve(true); };
-    requestAnimationFrame(() => overlay.classList.add("open"));
-  });
 }
 
 function showFullPage({ title, contentHtml, onMount }) {
@@ -126,29 +94,12 @@ async function loadStats() {
 }
 
 async function loadSubs() {
-  const r = await bridge.apiGet("subs");
-  subsCache = r;
-  return r;
+  return await bridge.apiGet("subs");
 }
 
 async function loadConfig() {
   platformConfig = await bridge.apiGet("config");
   return platformConfig;
-}
-
-async function loadKbs(force = false) {
-  if (!kbsCache.length || force) {
-    const platforms = Object.entries(platformConfig?.platforms || {})
-      .filter(([, p]) => p.supported)
-      .map(([id]) => id);
-    const res = await Promise.all(
-      platforms.map((id) =>
-        bridge.apiGet(`kbs?platform=${id}`).catch(() => [])
-      )
-    );
-    kbsCache = res.flat();
-  }
-  return kbsCache;
 }
 
 // ---------- 视图渲染 ----------
@@ -165,9 +116,7 @@ function renderOverview() {
   Object.entries(platformConfig?.platforms || {}).forEach(([id, p]) => {
     if (!p.supported) return;
     supported += 1;
-    const isSet = (p.fields || []).every(
-      (f) => platformConfig.values[f.key]
-    );
+    const isSet = (p.fields || []).every((f) => platformConfig.values[f.key]);
     if (isSet) configured += 1;
   });
   const platOk = supported > 0 && configured === supported;
@@ -199,17 +148,12 @@ function renderOverview() {
     </div>
     ${stats.configured && !Object.values(stats.configured).some(Boolean)
       ? `<div class="notice warn">尚无平台配置：请到「平台配置」填写凭据</div>` : ""}`;
-  bindQuickActions();
-}
-
-function bindQuickActions() {
-  const goto = (view) => () => switchView(view);
   const all = document.querySelector("[data-action=sync-all]");
-  if (all) all.onclick = () => triggerSync(null);
+  if (all) all.onclick = () => triggerSync();
   const g1 = document.querySelector("[data-action=goto-platforms]");
-  if (g1) g1.onclick = goto("platforms");
+  if (g1) g1.onclick = () => switchView("platforms");
   const g2 = document.querySelector("[data-action=goto-subs]");
-  if (g2) g2.onclick = goto("subs");
+  if (g2) g2.onclick = () => switchView("subs");
 }
 
 function renderPlatforms() {
@@ -254,14 +198,20 @@ async function openPlatformConfig(id) {
   await showFullPage({
     title: `${p.name} · 平台配置`,
     contentHtml: `
-      ${(p.fields || []).map((f) => `
+      ${(p.fields || []).map((f) => {
+        const isSecret = !!f.secret;
+        const cur = platformConfig.values[f.key];
+        const has = typeof cur === "string" ? !!cur : !!cur;
+        return `
         <div class="pfield">
           <label>${f.label}</label>
-          <input class="input" data-key="${f.key}" type="${f.secret ? "password" : "text"}"
+          <input class="input" data-key="${f.key}" type="${isSecret ? "password" : "text"}"
             autocomplete="off"
-            placeholder="${platformConfig.values[f.key] ? "已配置（留空保持不变）" : `输入 ${f.label}`}" />
-        </div>`).join("")}
-      <p class="add-hint dim">目标 AstrBot 知识库自动创建（名称与源一致），无需额外配置</p>
+            value="${isSecret ? "" : esc(typeof cur === "string" ? cur : "")}"
+            placeholder="${isSecret ? (has ? "已配置（留空保持不变）" : `输入 ${f.label}`) : `默认 ${cur || ""}`}" />
+        </div>`;
+      }).join("")}
+      <p class="add-hint dim">ima 目标知识库自动创建（名称与源一致）；有道云同步至上方指定的 AstrBot 知识库</p>
       <button class="btn primary" id="pf-save">保存配置</button>`,
     onMount: (body, close) => {
       body.querySelector("#pf-save").onclick = async () => {
@@ -290,98 +240,7 @@ async function openPlatformConfig(id) {
   });
 }
 
-function renderSubs() {
-  const root = $("view-subs");
-  const subs = root._subs || [];
-  const loading = root._loading;
-  if (loading) {
-    root.innerHTML = `<div class="loading"><span class="spinner lg"></span>加载中…</div>`;
-    return;
-  }
-  const kbName = (k) => k.name || k.kb_name || k.title || k.id || "未命名";
-  // 按平台分组渲染 select（optgroup）
-  const groups = new Map();
-  kbsCache.forEach((k) => {
-    const g = k.platform || "ima";
-    if (!groups.has(g)) groups.set(g, []);
-    groups.get(g).push(k);
-  });
-  let sel = "";
-  groups.forEach((items, g) => {
-    const label = platformConfig?.platforms?.[g]?.name || g;
-    sel += `<optgroup label="${label}">${items
-      .map((k) => `<option value="${k.id}" data-name="${kbName(k)}" data-platform="${g}">${kbName(k)}</option>`)
-      .join("")}</optgroup>`;
-  });
-  if (!sel) sel = '<option value="">加载 IMA 知识库…</option>';
-  // 同步列表按平台分组
-  const subGroups = new Map();
-  subs.forEach((s) => {
-    const g = s.platform || "ima";
-    if (!subGroups.has(g)) subGroups.set(g, []);
-    subGroups.get(g).push(s);
-  });
-  let subListHtml = "";
-  if (subs.length) {
-    subGroups.forEach((items, g) => {
-      const label = platformConfig?.platforms?.[g]?.name || g;
-      subListHtml += `
-        <div class="sub-group">
-          <div class="sub-group-title">${label}<span class="dim"> · ${items.length}</span></div>
-          <div class="sub-list">${items.map((s, i) => subCard(s, subs.indexOf(s))).join("")}</div>
-        </div>`;
-    });
-  } else {
-    subListHtml = `<div class="empty-state">暂无同步 · 从上方选择知识库拉取</div>`;
-  }
-  root.innerHTML = `
-    <div class="add-panel">
-      <div class="add-row">
-        <select class="input grow" id="sub-kb">
-          ${sel || '<option value="">加载 IMA 知识库…</option>'}
-        </select>
-        <button class="btn primary" data-action="add-sub">${ICONS.plus}拉取</button>
-      </div>
-      <p class="add-hint dim">拉取后自动创建 AstrBot 知识库（名称与源一致），无需手动指定目标库名</p>
-    </div>
-    ${subListHtml}`;
-
-  const addBtn = root.querySelector("[data-action=add-sub]");
-  addBtn.onclick = async () => {
-    const kbSel = $("sub-kb");
-    const kbId = kbSel.value;
-    if (!kbId) {
-      toast("请先选择知识库", "warn");
-      return;
-    }
-    const opt = kbSel.selectedOptions[0];
-    const kbName = opt?.dataset?.name || "";
-    const platform = opt?.dataset?.platform || "ima";
-    try {
-      const r = await bridge.apiPost("subs/add", {
-        kb_id: kbId,
-        kb_name: kbName,
-        platform,
-      });
-      if (r.exists) {
-        toast(`已在同步列表中：${r.sub.kb_name}`, "warn");
-      } else {
-        toast(`已拉取：${r.sub.kb_name}`, "success");
-      }
-      await refresh();
-    } catch (e) {
-      toast(e.message, "error");
-    }
-  };
-  root.querySelectorAll("[data-action=sub-sync]").forEach((b) => {
-    b.onclick = () => triggerSync(Number(b.dataset.index));
-  });
-  root.querySelectorAll("[data-action=sub-del]").forEach((b) => {
-    b.onclick = () => removeSub(Number(b.dataset.index));
-  });
-}
-
-function subCard(s, i) {
+function subCard(s) {
   const statusText = {
     ok: "正常",
     error: "异常",
@@ -389,58 +248,73 @@ function subCard(s, i) {
     pending: "待同步",
   }[s.last_status] || s.last_status;
   const statusCls = s.last_status === "ok" ? "ok" : s.last_status === "error" ? "err" : "warn";
+  const name = s.display_name || s.kb_name || s.kb_id || "未命名";
+  const target = s.platform === "youdao" ? s.target_kb || "YoudaoNote" : "";
   return `
     <div class="sub-card">
       <div class="sub-main">
         <div class="sub-line1">
-          <span class="sub-name">${s.kb_name || s.kb_id}</span>
-          <span class="badge ${statusCls}" title="${s.last_error || ""}">${statusText}</span>
+          <span class="sub-name">${esc(name)}</span>
+          <span class="badge ${statusCls}" title="${esc(s.last_error || "")}">${statusText}</span>
         </div>
         <div class="sub-line2">
+          ${target ? `<span class="dim">目标库 ${esc(target)}</span>` : ""}
           <span class="dim">已同步 ${s.synced_count}</span>
           <span class="dim">${s.last_sync_at ? `上次 ${s.last_sync_at}` : ""}</span>
         </div>
       </div>
       <div class="sub-ops">
-        <button class="btn small" data-action="sub-sync" data-index="${i}">${ICONS.sync}同步</button>
-        <button class="btn small danger" data-action="sub-del" data-index="${i}">${ICONS.trash}</button>
+        <button class="btn small" data-platform="${s.platform}" data-kb="${s.kb_id}">${ICONS.sync}同步</button>
       </div>
     </div>`;
 }
 
-
+function renderSubs() {
+  const root = $("view-subs");
+  const list = root._subs || [];
+  const loading = root._loading;
+  if (loading) {
+    root.innerHTML = `<div class="loading"><span class="spinner lg"></span>加载中…</div>`;
+    return;
+  }
+  const errs = list.filter((s) => s.error);
+  const items = list.filter((s) => !s.error);
+  const groups = new Map();
+  items.forEach((s) => {
+    const g = s.platform || "ima";
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(s);
+  });
+  let html = "";
+  errs.forEach((e) => {
+    const label = platformConfig?.platforms?.[e.platform]?.name || e.platform || "";
+    html += `<div class="notice warn">${esc(label)}：${esc(e.message)}</div>`;
+  });
+  groups.forEach((subs, g) => {
+    const label = platformConfig?.platforms?.[g]?.name || g;
+    html += `
+      <div class="sub-group">
+        <div class="sub-group-title">${label}<span class="dim"> · ${subs.length}</span></div>
+        <div class="sub-list">${subs.map((s) => subCard(s)).join("")}</div>
+      </div>`;
+  });
+  if (!items.length && !errs.length) {
+    html = `<div class="empty-state">暂无同步源 · 先到「平台配置」填写凭据</div>`;
+  }
+  root.innerHTML = html;
+  root.querySelectorAll("[data-kb]").forEach((b) => {
+    b.onclick = () => triggerSync(b.dataset.kb, b.dataset.platform || "ima");
+  });
+}
 
 // ---------- 操作 ----------
 
-async function triggerSync(index = null) {
+async function triggerSync(kbId = null, platform = "ima") {
   try {
-    toast(index === null ? "正在启动全量同步…" : "正在启动同步…");
-    await bridge.apiPost("sync", index === null ? {} : { index });
+    toast(kbId ? "正在启动同步…" : "正在启动全量同步…");
+    await bridge.apiPost("sync", kbId ? { kb_id: kbId, platform } : {});
     toast("同步已启动，后台执行中");
     startPoll();
-  } catch (e) {
-    toast(e.message, "error");
-  }
-}
-
-async function removeSub(index) {
-  const s = subsCache[index];
-  if (!s) return;
-  const kbName = s.target_kb || s.kb_name || "（未知）";
-  const checked = await showConfirm({
-    title: "删除同步源",
-    message: `确定删除同步源「${esc(s.kb_name || s.kb_id)}」？`,
-    danger: true,
-    confirmText: "删除",
-    extraHtml: `<label class="modal-check"><input type="checkbox" id="del-kb-chk" /> 同时删除 AstrBot 知识库「${esc(kbName)}」</label>
-      <p class="modal-warn dim">删除知识库不可恢复，其下所有文档与索引将一并清除</p>`,
-  });
-  if (!checked) return;
-  const delKb = document.getElementById("del-kb-chk")?.checked || false;
-  try {
-    const r = await bridge.apiPost(`subs/${index}/remove`, { delete_kb: delKb });
-    toast(delKb && r.kb_deleted ? `已删除同步源与知识库：${r.name}` : `已删除同步源：${r.name}`, "success");
-    await refresh();
   } catch (e) {
     toast(e.message, "error");
   }
@@ -507,7 +381,6 @@ async function main() {
   });
   $("btn-refresh").onclick = async () => {
     try {
-      await loadKbs(true);
       await refresh();
       toast("已刷新");
     } catch (e) {
@@ -525,7 +398,6 @@ async function main() {
   try {
     view._loading = true;
     renderSubs();
-    await loadKbs();
     const subs = await loadSubs();
     view._subs = subs;
     view._loading = false;

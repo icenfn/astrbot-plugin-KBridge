@@ -221,10 +221,62 @@ class SyncManager:
         self.logger.info(f"[KBridge] 删除同步源: {sub.kb_name} ({sub.kb_id})")
         return sub
 
+    async def ensure_ima_subs(self) -> list[dict[str, Any]]:
+        """确保 IMA 自建知识库均有对应同步源（页面直接展示，无需手动拉取）。
+
+        返回归一化的知识库列表（含 id/name），供页面展示。
+        """
+        client = await self.get_client("ima")
+        items = await _retry_with_backoff(lambda: client.search_knowledge_bases())
+        # 只展示自建库：订阅/共享文件无法经 OpenAPI 读取（220030），拉取必然失败
+        items = [it for it in items if it.get("base_type") != "我加入的订阅知识库"]
+        subs = await self.get_subs()
+        existing = {(s.platform, s.kb_id) for s in subs}
+        added = False
+        for it in items:
+            kb_id = str(it.get("id") or "")
+            if not kb_id or ("ima", kb_id) in existing:
+                continue
+            subs.append(
+                Subscription(kb_id=kb_id, kb_name=it.get("name") or kb_id, platform="ima")
+            )
+            existing.add(("ima", kb_id))
+            added = True
+        if added:
+            await self._save_subs(subs)
+            self.logger.info(f"[KBridge] 自动补全 IMA 同步源（无需手动拉取）")
+        return items
+
+    async def ensure_youdao_sub(self) -> Subscription:
+        """确保有道云单库同步源存在，目标库名与配置（youdao_target_kb）保持同步。"""
+        subs = await self.get_subs()
+        sub = next((s for s in subs if s.platform == "youdao"), None)
+        target = (self.config.get("youdao_target_kb") or "").strip() or "YoudaoNote"
+        if sub is None:
+            sub = Subscription(
+                kb_id="0", kb_name="全部笔记", target_kb=target, platform="youdao"
+            )
+            subs.append(sub)
+            await self._save_subs(subs)
+        elif sub.target_kb != target:
+            sub.target_kb = target
+            await self._save_subs(subs)
+        return sub
+
     async def resolve_target_kb(self, sub: Subscription):
-        """解析/创建目标 AstrBot 知识库，返回 KBHelper 或抛错。"""
+        """解析/创建目标 AstrBot 知识库，返回 KBHelper 或抛错。
+
+        有道云目标库名取配置 youdao_target_kb（默认 YoudaoNote）；ima 与源同名。
+        """
         kb_mgr = self.context.kb_manager
-        name = sub.target_kb or sub.kb_name
+        if sub.platform == "youdao":
+            name = (
+                sub.target_kb
+                or (self.config.get("youdao_target_kb") or "").strip()
+                or "YoudaoNote"
+            )
+        else:
+            name = sub.target_kb or sub.kb_name
         kb = await kb_mgr.get_kb_by_name(name)
         if kb:
             return kb, name
@@ -322,23 +374,38 @@ class SyncManager:
             raise
 
     async def _sync_ima(self, sub: Subscription, result: SyncResult) -> None:
-        """IMA 同步：翻页拉取根目录 -> 逐个条目增量处理。"""
+        """IMA 同步：递归遍历知识库（含文件夹）-> 逐个条目增量处理。"""
         client = await self.get_client("ima")
         kb, kb_name = await self.resolve_target_kb(sub)
         index = await self._get_index()
         kb_index = index.setdefault(sub.kb_id, {})
 
-        # 1. 拉取根目录全部条目（翻页）
+        # 1. 递归收集全部叶子条目（media_type=99 的文件夹递归进入，目录本身不入库）
         items: list[dict[str, Any]] = []
-        cursor = ""
-        while True:
-            batch, is_end, next_cursor = await _retry_with_backoff(
-                lambda: client.list_kb_items(sub.kb_id, cursor=cursor)
-            )
-            items.extend(batch)
-            if is_end or not next_cursor or len(items) >= MAX_ITEM_SAVE:
-                break
-            cursor = next_cursor
+
+        async def walk(folder_id: str | None, depth: int = 0) -> None:
+            if depth > 8 or len(items) >= MAX_ITEM_SAVE:
+                return
+            cursor = ""
+            while True:
+                batch, is_end, next_cursor = await _retry_with_backoff(
+                    lambda: client.list_kb_items(
+                        sub.kb_id, cursor=cursor, folder_id=folder_id
+                    )
+                )
+                for it in batch:
+                    if len(items) >= MAX_ITEM_SAVE:
+                        return
+                    media_id = str(it.get("media_id") or "")
+                    if it.get("media_type") == 99 or media_id.startswith("folder_"):
+                        await walk(media_id, depth + 1)
+                    else:
+                        items.append(it)
+                if is_end or not next_cursor or len(items) >= MAX_ITEM_SAVE:
+                    break
+                cursor = next_cursor
+
+        await walk(None)
         result.total = len(items)
 
         # 2. 逐个条目增量同步（并发受限）

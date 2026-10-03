@@ -17,6 +17,12 @@
     "default": "",
     "secret": true
   },
+  "youdao_target_kb": {
+    "description": "有道云笔记同步至 AstrBot 知识库的名称（默认 YoudaoNote，自动创建）",
+    "type": "string",
+    "default": "YoudaoNote",
+    "secret": false
+  },
   "max_concurrency": {
     "description": "同步下载并发数（建议 1-5，受 IMA 接口频控限制）",
     "type": "int",

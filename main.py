@@ -1,9 +1,8 @@
-"""KBridge — AstrBot 插件：同步外部知识源（ima）到 AstrBot 知识库。
+"""KBridge — AstrBot 插件：同步外部知识源（ima / 有道云笔记）到 AstrBot 知识库。
 
 命令（/kbridge）：
 - /kbridge                   帮助
 - /kbridge kbs               列出 IMA 账号可同步的知识库（自建）
-- /kbridge sub add <id|名称> [--to 目标知识库名]   拉取同步源
 - /kbridge sub list          列出同步源
 - /kbridge sub del <序号>    删除同步源
 - /kbridge sync [序号|all]   手动同步（默认 all）
@@ -53,7 +52,6 @@ def webapi_handler(func):
 HELP_TEXT = """KBridge - 外部知识源同步
 
 /kbridge kbs                   列出 IMA 知识库（自建）
-/kbridge sub add <id|名称> [--to 目标库名]   拉取同步源
 /kbridge sub list              同步源列表
 /kbridge sub del <序号>        删除同步源
 /kbridge sync [序号|all]       手动同步"""
@@ -78,17 +76,15 @@ class KBridge(Star):
         "ima_client_id": "str",
         "ima_api_key": "str",
         "youdao_api_key": "str",
+        "youdao_target_kb": "str",
         "max_concurrency": "int",
     }
 
     def _register_web_apis(self) -> None:
         routes = [
             (f"/{PLUGIN_NAME}/stats", self.api_stats, ["GET"], "KBridge 总览状态"),
-            (f"/{PLUGIN_NAME}/subs", self.api_subs, ["GET"], "同步源列表"),
-            (f"/{PLUGIN_NAME}/subs/add", self.api_subs_add, ["POST"], "拉取同步源"),
-            (f"/{PLUGIN_NAME}/subs/<idx>/remove", self.api_subs_remove, ["POST"], "删除同步源"),
+            (f"/{PLUGIN_NAME}/subs", self.api_subs, ["GET"], "可同步知识库列表"),
             (f"/{PLUGIN_NAME}/sync", self.api_sync, ["POST"], "触发同步"),
-            (f"/{PLUGIN_NAME}/kbs", self.api_kbs, ["GET"], "IMA 自建知识库列表"),
             (f"/{PLUGIN_NAME}/config", self.api_config_get, ["GET"], "读取平台配置"),
             (f"/{PLUGIN_NAME}/config", self.api_config_save, ["POST"], "保存平台配置"),
         ]
@@ -114,16 +110,21 @@ class KBridge(Star):
                         "supported": True,
                         "fields": [
                             {"key": "youdao_api_key", "label": "API Key", "secret": True},
+                            {
+                                "key": "youdao_target_kb",
+                                "label": "同步至 AstrBot 知识库",
+                                "secret": False,
+                            },
                         ],
                     },
                     "github": {"name": "GitHub Repository", "supported": False},
-                    "notebook": {"name": "Open Notebook", "supported": False},
-                    "url2kb": {"name": "url2kb", "supported": False},
                 },
                 "values": {
-                    "ima_client_id": bool(self.config.get("ima_client_id")),
+                    "ima_client_id": (self.config.get("ima_client_id") or "").strip(),
                     "ima_api_key": bool(self.config.get("ima_api_key")),
                     "youdao_api_key": bool(self.config.get("youdao_api_key")),
+                    "youdao_target_kb": (self.config.get("youdao_target_kb") or "").strip()
+                    or "YoudaoNote",
                 },
                 "common": {
                     "max_concurrency": int(self.config.get("max_concurrency", 3) or 3),
@@ -160,6 +161,8 @@ class KBridge(Star):
         ):
             if any(k in saved for k in keys):
                 await self.manager.reset_client(platform)
+        if "youdao_target_kb" in saved:
+            await self.manager.ensure_youdao_sub()
         self.logger.info(f"[KBridge] 页面保存平台配置成功: {saved}")
         return json_response({"saved": saved})
 
@@ -182,135 +185,64 @@ class KBridge(Star):
 
     @webapi_handler
     async def api_subs(self):
-        subs = await self.manager.get_subs()
-        return json_response([s.to_dict() for s in subs])
-
-    @webapi_handler
-    async def api_subs_add(self):
-        payload = await request.json(default={})
-        kb_id = str(payload.get("kb_id") or "").strip()
-        if not kb_id:
-            return error_response("缺少 kb_id", status_code=400)
-        platform = str(payload.get("platform") or "ima")
-        target_kb = str(payload.get("target_kb") or "").strip()
-        # 前端从知识库列表选择时直接携带名称，无需再搜索
-        kb_name = str(payload.get("kb_name") or "").strip()
-        if kb_name:
-            matched = {"id": kb_id, "name": kb_name}
-        elif platform == "ima":
-            # 兼容手动输入 id/名称：先搜索匹配
-            client = await self.manager.get_client("ima")
-            try:
-                items = await _retry_with_backoff(lambda: client.search_knowledge_bases(kb_id))
-            except IMAError as e:
-                return error_response(f"IMA 错误: {e.msg}", status_code=400)
-            matched = next(
-                (it for it in items if it.get("id") == kb_id or it.get("name") == kb_id),
-                None,
-            )
-            if matched is None and items:
-                matched = items[0]
-            if matched is None:
-                return error_response(f"未找到知识库: {kb_id}", status_code=404)
-        else:
-            return error_response(f"未找到知识库: {kb_id}", status_code=404)
-        # 重复拉取：返回已存在而非报错（前端提示"已在同步列表中"）
-        existing = await self.manager.get_sub_by_kb_id(matched["id"], platform)
-        if existing is not None:
-            return json_response(
-                {"added": False, "exists": True, "sub": existing.to_dict()}
-            )
-        sub = await self.manager.add_subscription(
-            kb_id=matched["id"],
-            kb_name=matched.get("name", matched["id"]),
-            target_kb=target_kb,
-            platform=platform,
-        )
-        return json_response({"added": True, "exists": False, "sub": sub.to_dict()})
-
-    @webapi_handler
-    async def api_subs_remove(self, idx):
-        # AstrBot 路由路径参数以字符串传入，必须显式转 int
+        """同步页知识库列表：ima 实时自建库 + 有道云单库，自动补全订阅并合并状态。"""
+        out: list[dict] = []
+        # ima：实时列表，自动 ensure 订阅（无需手动拉取）
         try:
-            idx = int(idx)
-        except (TypeError, ValueError):
-            return error_response("idx 必须是数字", status_code=400)
-        try:
-            sub = await self.manager.remove_subscription(idx)
-        except ValueError as e:
-            return error_response(str(e), status_code=400)
-        # 可选：同时删除对应的 AstrBot 知识库
-        kb_deleted = False
-        payload = await request.json(default={})
-        if payload.get("delete_kb"):
-            name = sub.target_kb or sub.kb_name
-            kb_mgr = self.context.kb_manager
-            kb = await kb_mgr.get_kb_by_name(name)
-            if kb is not None:
-                await kb_mgr.delete_kb(kb.kb.kb_id)
-                kb_deleted = True
-        return json_response({"removed": True, "name": sub.kb_name, "kb_deleted": kb_deleted})
+            items = await self.manager.ensure_ima_subs()
+            subs = await self.manager.get_subs()
+            by_key = {(s.platform, s.kb_id): s for s in subs}
+            for it in items:
+                kb_id = str(it.get("id") or "")
+                if not kb_id:
+                    continue
+                sub = by_key.get(("ima", kb_id))
+                if sub is None:
+                    continue
+                row = sub.to_dict()
+                row["display_name"] = it.get("name") or sub.kb_name
+                out.append(row)
+        except IMAError as e:
+            out.append({"error": True, "platform": "ima", "message": e.msg})
+        except Exception:  # noqa: BLE001
+            self.logger.exception("查询 ima 可同步知识库失败")
+            out.append({"error": True, "platform": "ima", "message": "查询失败，详见日志"})
+        # 有道云：单库「全部笔记」，目标库名来自配置
+        if (self.config.get("youdao_api_key") or "").strip():
+            sub = await self.manager.ensure_youdao_sub()
+            row = sub.to_dict()
+            row["display_name"] = "全部笔记"
+            out.append(row)
+        self.logger.info(f"[KBridge] 同步页知识库列表: {len(out)} 项")
+        return json_response(out)
 
     @webapi_handler
     async def api_sync(self):
         payload = await request.json(default={})
         if self.manager.is_syncing:
             return error_response("已有同步任务在运行", status_code=409)
-        index = payload.get("index")
-        if index is not None and not isinstance(index, int):
-            try:
-                index = int(index)
-            except (TypeError, ValueError):
-                return error_response("index 必须是数字", status_code=400)
-        asyncio.get_running_loop().create_task(self._bg_sync(index))
+        kb_id = str(payload.get("kb_id") or "").strip()
+        platform = str(payload.get("platform") or "ima").strip() or "ima"
+        if kb_id:
+            sub = await self.manager.get_sub_by_kb_id(kb_id, platform)
+            if sub is None:
+                return error_response("同步源不存在", status_code=404)
+            asyncio.get_running_loop().create_task(self._bg_sync_sub(sub))
+        else:
+            asyncio.get_running_loop().create_task(self._bg_sync(None))
         return json_response({"started": True})
 
-    @webapi_handler
-    async def api_kbs(self):
-        platform = str(request.query.get("platform") or "ima")
-        if platform == "youdao":
-            return await self._api_youdao_kbs()
-        client = await self.manager.get_client("ima")
-        items = await _retry_with_backoff(lambda: client.search_knowledge_bases())
-        # 只展示自建知识库：订阅/共享库（base_type="我加入的订阅知识库"）的
-        # 文件无法通过 OpenAPI 读取（220030），拉取必然失败，避免误导
-        items = [it for it in items if it.get("base_type") != "我加入的订阅知识库"]
-        # 标记平台来源（供前端 select 分组）
-        for it in items:
-            it.setdefault("platform", "ima")
-        self.logger.info(f"[KBridge] 查询 IMA 自建知识库列表: {len(items)} 个")
-        return json_response(items)
-
-    async def _api_youdao_kbs(self):
-        """有道云笔记本列表：根目录 + 一级文件夹（目录即同步单元）。"""
-        client = await self.manager.get_client("youdao")
-        items = [{"id": "0", "name": "全部笔记（根目录）", "platform": "youdao"}]
-        try:
-            entries, _ = await _retry_with_backoff(lambda: client.list_items("0"))
-            for e in entries:
-                if e.get("dir"):
-                    items.append(
-                        {
-                            "id": e.get("id"),
-                            "name": e.get("name"),
-                            "platform": "youdao",
-                        }
-                    )
-        except Exception:  # noqa: BLE001
-            self.logger.exception("查询有道云目录失败")
-            raise
-        self.logger.info(f"[KBridge] 查询有道云目录: {len(items)} 个（含根目录）")
-        return json_response(items)
-
     async def _bg_sync(self, index: int | None) -> None:
-        """后台同步任务（WebUI 触发）。"""
+        """后台同步任务（WebUI 触发，全量）。"""
         try:
-            if index is None:
-                await self.manager.sync_all()
-            else:
-                subs = await self.manager.get_subs()
-                if 0 <= index < len(subs):
-                    await self.manager.sync_subscription(subs[index])
+            await self.manager.sync_all()
+        except Exception:  # noqa: BLE001
+            self.logger.exception("KBridge 页面触发同步失败")
+
+    async def _bg_sync_sub(self, sub) -> None:
+        """后台同步任务（WebUI 触发，单个知识库）。"""
+        try:
+            await self.manager.sync_subscription(sub)
         except Exception:  # noqa: BLE001
             self.logger.exception("KBridge 页面触发同步失败")
 
@@ -364,7 +296,7 @@ class KBridge(Star):
 
     async def _cmd_sub(self, event: AstrMessageEvent, rest: list[str]):
         if not rest:
-            return event.plain_result("用法: /kbridge sub add <id|名称> [--to 目标库名] | list | del <序号>")
+            return event.plain_result("用法: /kbridge sub list | del <序号>")
         action = rest[0].lower()
         if action == "list":
             subs = await self.manager.get_subs()
@@ -373,8 +305,11 @@ class KBridge(Star):
             lines = ["当前同步源："]
             for i, s in enumerate(subs):
                 status = "✔" if s.last_status == "ok" else s.last_status
+                target = s.target_kb or (
+                    "YoudaoNote" if s.platform == "youdao" else "自动"
+                )
                 lines.append(
-                    f"{i}. {s.kb_name} (ima: {s.kb_id}) -> {s.target_kb or '自动'}"
+                    f"{i}. {s.kb_name} ({s.platform}) -> {target}"
                     f" | 已同步 {s.synced_count} | {status} | 上次: {s.last_sync_at or '-'}"
                 )
             return event.plain_result("\n".join(lines))
@@ -387,27 +322,6 @@ class KBridge(Star):
                 return event.plain_result("序号必须是数字")
             sub = await self.manager.remove_subscription(idx)
             return event.plain_result(f"已删除同步源: {sub.kb_name} ({sub.kb_id})")
-        if action == "add":
-            if len(rest) < 2:
-                return event.plain_result("用法: /kbridge sub add <id|名称> [--to 目标库名]")
-            target = ""
-            if "--to" in rest:
-                pos = rest.index("--to")
-                if pos + 1 < len(rest):
-                    target = rest[pos + 1]
-            key = rest[1]
-            client = await self.manager.get_client()
-            items = await _retry_with_backoff(lambda: client.search_knowledge_bases(key))
-            if not items:
-                return event.plain_result(f"未找到知识库: {key}")
-            matched = next((it for it in items if it.get("id") == key or it.get("name") == key), items[0])
-            sub = await self.manager.add_subscription(
-                kb_id=matched["id"], kb_name=matched.get("name", matched["id"]), target_kb=target
-            )
-            return event.plain_result(
-                f"已拉取同步源: {sub.kb_name} -> {sub.target_kb or '自动创建'}\n"
-                f"立即同步: /kbridge sync"
-            )
         return event.plain_result(f"未知 sub 操作: {action}")
 
     async def _cmd_sync(self, event: AstrMessageEvent, rest: list[str]):
