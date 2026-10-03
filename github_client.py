@@ -6,8 +6,6 @@
 认证：可选 GitHub Token（Authorization: Bearer），公开仓库可匿名（限 60 次/小时）。
 """
 
-from __future__ import annotations
-
 import asyncio
 import re
 from typing import Any
@@ -22,13 +20,11 @@ SUPPORTED_EXT = {"md", "txt", "markdown", "rst", "adoc", "docx", "xlsx", "xls", 
 # 树遍历时忽略的路径片段（避免拉入依赖/构建产物）
 IGNORE_SEGMENTS = {"node_modules", ".git", "dist", "build", ".venv", "venv", "__pycache__", ".idea", ".vscode"}
 
-
 class GitHubError(Exception):
     def __init__(self, msg: str, status: int | None = None):
         super().__init__(msg)
         self.msg = msg
         self.status = status
-
 
 def parse_github_url(url: str) -> dict[str, str]:
     """解析 GitHub URL 为 {owner, repo, branch, path}。
@@ -59,13 +55,11 @@ def parse_github_url(url: str) -> dict[str, str]:
             raise GitHubError(f"不支持的 GitHub 路径: /{rest}")
     return {"owner": owner, "repo": repo, "branch": branch, "path": path}
 
-
 def sub_key(parsed: dict[str, str]) -> str:
     """规范化同步源唯一键（存入 Subscription.kb_id）。"""
     branch = parsed.get("branch") or "default"
     path = parsed.get("path") or ""
     return f"gh:{parsed['owner']}/{parsed['repo']}@{branch}:{path or '/'}"
-
 
 def sub_key_to_parsed(key: str) -> dict[str, str]:
     """从同步源键（gh:owner/repo@branch:path）还原 {owner, repo, branch, path}。
@@ -81,14 +75,12 @@ def sub_key_to_parsed(key: str) -> dict[str, str]:
         branch = ""  # default 为占位符，表示需查询仓库默认分支
     return {"owner": owner, "repo": repo, "branch": branch, "path": path.strip("/")}
 
-
 def display_name(parsed: dict[str, str]) -> str:
     """页面/列表显示名。"""
     base = f"{parsed['owner']}/{parsed['repo']}"
     if parsed.get("path"):
         return f"{base} : {parsed['path']}"
     return base
-
 
 class GitHubClient:
     def __init__(self, token: str = "", raw_mirror: str = ""):

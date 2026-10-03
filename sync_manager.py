@@ -6,8 +6,6 @@
                   有道云条目 id 以 yd: 前缀区分，IMA 保持无前缀兼容存量）
 """
 
-from __future__ import annotations
-
 import asyncio
 import html as html_lib
 import uuid
@@ -25,8 +23,6 @@ from .github_client import (
     GitHubClient,
     GitHubError,
     IGNORE_SEGMENTS,
-    parse_github_url,
-    sub_key,
     sub_key_to_parsed,
 )
 
@@ -52,7 +48,6 @@ YDAO_KEY_PREFIX = "yd:"
 _TAG_RE = re.compile(r"<[^>]+>")
 _SCRIPT_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _WS_RE = re.compile(r"[ \t\r\f\v]+")
-
 
 @dataclass
 class Subscription:
@@ -85,10 +80,8 @@ class Subscription:
     def from_dict(cls, d: dict) -> "Subscription":
         return cls(**{k: d.get(k, v) for k, v in cls.__dataclass_fields__.items() if k in d})
 
-
 class _SyncCancelled(Exception):
     """同步被用户取消（已入库部分保留）。"""
-
 
 @dataclass
 class SyncResult:
@@ -100,11 +93,9 @@ class SyncResult:
     errors: list[str] = field(default_factory=list)
     skip_counts: dict[str, int] = field(default_factory=dict)
 
-
 def _sanitize_filename(name: str) -> str:
     name = re.sub(r'[\\/:*?"<>|\r\n\t]', "_", name).strip(" .")
     return name[:120] or "untitled"
-
 
 def _html_to_markdown(raw: str) -> str:
     """极简 HTML -> Markdown 文本提取（不引入额外依赖）。"""
@@ -117,7 +108,6 @@ def _html_to_markdown(raw: str) -> str:
     lines = [ln.strip() for ln in text.splitlines()]
     return "\n".join(ln for ln in lines if ln)
 
-
 def _ext_from_url(url: str, media_type: int) -> str | None:
     """根据 URL 推断文件扩展名；无法判断时返回 None。"""
     if media_type in TEXT_MEDIA_TYPES:
@@ -128,7 +118,6 @@ def _ext_from_url(url: str, media_type: int) -> str | None:
         if ext in SUPPORTED_EXT:
             return ext
     return None
-
 
 class SyncManager:
     """同步源管理与同步核心。star 为插件实例（提供 KV 存储与专属 logger）。"""

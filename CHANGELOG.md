@@ -28,6 +28,10 @@
 
 ### Changed
 
+- 删除本地按钮在目标知识库不存在时**禁用**（显示「未同步」状态时无需再删），并更新提示文案
+- 清理冗余代码：删除 5 个文件的 `from __future__ import annotations`（AstrBot 为 Python 3.12，无需）、sync_manager 未使用的 `parse_github_url/sub_key` import、style.css 中**完全重复的两个移动端媒体块**（合并为一个）
+
+
 - GitHub 同步列表标题改为显示**目标本地 AstrBot 知识库名**（repo 名，如 `30-seconds-of-code`），不再显示完整仓库路径（`owner/repo : path`）
 - 删除操作增加**二次确认弹窗**：同步列表「删除本地」与 Github 配置弹窗「删除仓库」均需确认（自定义样式化弹窗，非原生 confirm）
 - 同步列表状态兜底：删除本地后状态显示「未同步」（原为空文本）

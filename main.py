@@ -8,8 +8,6 @@
 - /kbridge sync [序号|all]   手动同步（默认 all）
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from functools import wraps
@@ -33,7 +31,6 @@ logger = logging.getLogger("astrbot")
 
 PLUGIN_NAME = "astrbot_plugin_kbridge"
 
-
 def webapi_handler(func):
     """Web API 统一错误兜底：记录完整日志并返回可读错误，避免页面只看到 Internal server error。"""
 
@@ -56,14 +53,12 @@ def webapi_handler(func):
 
     return wrapper
 
-
 HELP_TEXT = """KBridge - 外部知识源同步
 
 /kbridge kbs                   列出 IMA 知识库（自建）
 /kbridge sub list              同步源列表
 /kbridge sub del <序号>        删除同步源
 /kbridge sync [序号|all]       手动同步"""
-
 
 @register("KBridge", "icenfn", "外部知识源（ima）同步到 AstrBot 知识库", "0.1.0")
 class KBridge(Star):
@@ -745,7 +740,6 @@ class KBridge(Star):
         yield event.plain_result(f"正在同步 {len(subs)} 个同步源…")
         results = await self.manager.sync_all()
         yield event.plain_result("\n\n".join(_format_result(r) for r in results))
-
 
 def _format_result(r) -> str:
     lines = [f"同步完成: 共 {r.total} 条"]

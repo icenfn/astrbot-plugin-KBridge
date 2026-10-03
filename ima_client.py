@@ -4,8 +4,6 @@
 接口 Base Path：/openapi/wiki/v1
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Any
@@ -27,7 +25,6 @@ RETRYABLE_HTTP = {403, 429, 500, 502, 503, 504}
 # 官方 skill 版本（随 ima-skills 包更新）
 SKILL_VERSION = "1.1.10"
 
-
 class IMAError(Exception):
     def __init__(self, code: int, msg: str, http_status: int | None = None):
         super().__init__(f"[{code}] {msg}")
@@ -37,7 +34,6 @@ class IMAError(Exception):
 
     def retryable(self) -> bool:
         return self.code in RETRYABLE_CODES or self.http_status in RETRYABLE_HTTP
-
 
 class IMAClient:
     def __init__(self, client_id: str, api_key: str, timeout: int = 30):
@@ -167,7 +163,6 @@ class IMAClient:
             {"note_id": note_id, "target_content_format": 0},
             base_path="/openapi/note/v1",
         )
-
 
 async def _retry_with_backoff(
     fn: Any, retries: int = 3, base_delay: float = 1.0

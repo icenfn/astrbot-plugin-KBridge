@@ -7,8 +7,6 @@ JSON-RPC，响应经 SSE 流回推。实现基于标准库 http.client（线程�
 调用方经 asyncio.to_thread 桥接），无第三方依赖。
 """
 
-from __future__ import annotations
-
 import asyncio
 import http.client
 import json
@@ -23,13 +21,11 @@ MCP_SSE_PATH = "/api/ynote/mcp/sse"
 TOOL_LIST_NOTES = "listNotes"
 TOOL_GET_CONTENT = "getNoteTextContent"
 
-
 class YoudaoError(Exception):
     def __init__(self, code: int, msg: str):
         super().__init__(msg)
         self.code = code
         self.msg = msg
-
 
 class YoudaoClient:
     """有道云笔记 MCP 客户端。调用方须串行调用（MCP 会话单连接）。"""

@@ -140,6 +140,7 @@ svg { width: 18px; height: 18px; flex: none; }
   font-weight: 500;
   transition: all 0.15s;
 }
+
 .btn:hover { border-color: var(--primary); color: var(--primary); }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 .btn.primary:hover { background: var(--primary-hover); }
@@ -442,8 +443,7 @@ svg { width: 18px; height: 18px; flex: none; }
 /* ---------- 底部导航（移动端） ---------- */
 .tabbar { display: none; }
 
-@media (max-width: 768px) {
-  .sidebar { display: none; }
+
   .content { padding: 16px 16px 96px; }
   .tabbar {
     display: flex;

@@ -545,7 +545,7 @@ function subCard(s) {
           <span>定时同步</span>
         </label>
         ${syncBtn}
-        <button class="btn small danger sub-dellocal" data-del="${esc(s.kb_id)}" data-dname="${esc(name)}" data-platform="${esc(s.platform)}" title="删除已同步到 AstrBot 的本地知识库（订阅保留）">${ICONS.trash}删除本地</button>
+        <button class="btn small danger sub-dellocal" data-del="${esc(s.kb_id)}" data-dname="${esc(name)}" data-platform="${esc(s.platform)}" ${missing ? "disabled" : ""} title="${missing ? "本地知识库不存在，无需删除" : "删除已同步到 AstrBot 的本地知识库（订阅保留）"}">${ICONS.trash}删除本地</button>
       </div>
     </div>`;
 }
