@@ -299,28 +299,31 @@ async function openPlatformConfig(id) {
 }
 
 function subCard(s) {
-  const statusText = {
-    ok: "正常",
-    error: "异常",
-    partial: "部分失败",
-    pending: "待同步",
-  }[s.last_status] || s.last_status;
-  const statusCls = s.last_status === "ok" ? "ok" : s.last_status === "error" ? "err" : "warn";
+  // 目标 AstrBot 知识库已删除 → 显示「未同步」，同步时会自动重建
+  const missing = !!s.kb_missing;
+  const statusText = missing
+    ? "未同步"
+    : ({
+        ok: "正常",
+        error: "异常",
+        partial: "部分失败",
+        pending: "待同步",
+      }[s.last_status] || s.last_status);
+  const statusCls = missing ? "err" : s.last_status === "ok" ? "ok" : s.last_status === "error" ? "err" : "warn";
+  const statusTitle = missing ? "目标知识库已删除，同步后将自动重建" : (s.last_error || "");
   const name = s.display_name || s.kb_name || s.kb_id || "未命名";
-  const target = s.platform === "youdao" ? s.target_kb || "YoudaoNote" : s.platform === "github" ? (s.target_kb || "") : "";
   return `
     <div class="sub-card">
       <div class="sub-main">
         <div class="sub-line1">
           <span class="sub-name">${esc(name)}</span>
-          <span class="badge ${statusCls}" title="${esc(s.last_error || "")}">${statusText}</span>
+          <span class="badge ${statusCls}" title="${esc(statusTitle)}">${statusText}</span>
           <label class="sub-toggle" title="定时同步开关">
             <input type="checkbox" data-tgl="${esc(s.kb_id)}" data-platform="${esc(s.platform)}" ${s.enabled ? "checked" : ""} />
             <span>定时</span>
           </label>
         </div>
         <div class="sub-line2">
-          ${target ? `<span class="dim">目标库 ${esc(target)}</span>` : ""}
           <span class="dim">已同步 ${s.synced_count}</span>
           <span class="dim">${s.last_sync_at ? `上次 ${s.last_sync_at}` : ""}</span>
         </div>

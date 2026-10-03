@@ -316,12 +316,13 @@ class SyncManager:
         target = (self.config.get("youdao_target_kb") or "").strip() or "YoudaoNote"
         if sub is None:
             sub = Subscription(
-                kb_id="0", kb_name="全部笔记", target_kb=target, platform="youdao"
+                kb_id="0", kb_name=target, target_kb=target, platform="youdao"
             )
             subs.append(sub)
             await self._save_subs(subs)
-        elif sub.target_kb != target:
+        elif sub.target_kb != target or sub.kb_name != target:
             sub.target_kb = target
+            sub.kb_name = target
             await self._save_subs(subs)
         return sub
 
@@ -475,11 +476,15 @@ class SyncManager:
             )
             return result
         except Exception as e:  # noqa: BLE001
+            # 不向上抛出：返回带 error 状态的 result，页面/定时日志可正常展示
             self.logger.exception(f"同步失败 {sub.kb_id}")
             sub.last_status = "error"
             sub.last_error = str(e)
+            if result.total == 0 and result.failed == 0:
+                result.failed = 1
+                result.errors.append(str(e))
             await self._flush_sub(sub)
-            raise
+            return result
 
     async def _sync_ima(self, sub: Subscription, result: SyncResult) -> None:
         """IMA 同步：递归遍历知识库（含文件夹）-> 逐个条目增量处理。"""

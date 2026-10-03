@@ -313,11 +313,11 @@ class KBridge(Star):
         except Exception:  # noqa: BLE001
             self.logger.exception("查询 ima 可同步知识库失败")
             out.append({"error": True, "platform": "ima", "message": "查询失败，详见日志"})
-        # 有道云：单库「全部笔记」，目标库名来自配置
+        # 有道云：单库同步，名称取自配置 youdao_target_kb
         if (self.config.get("youdao_api_key") or "").strip():
             sub = await self.manager.ensure_youdao_sub()
             row = sub.to_dict()
-            row["display_name"] = "全部笔记"
+            row["display_name"] = sub.target_kb or sub.kb_name or "YoudaoNote"
             out.append(row)
         # GitHub：手动添加的仓库订阅（不做自动补全）
         for s in subs:
@@ -326,6 +326,18 @@ class KBridge(Star):
             row = s.to_dict()
             row["display_name"] = s.kb_name
             out.append(row)
+
+        # 目标 AstrBot 知识库已删除时标记，页面显示「未同步」
+        async def mark_missing(row: dict) -> None:
+            if row.get("error"):
+                return
+            name = (row.get("target_kb") or "").strip() or (row.get("kb_name") or "").strip()
+            if not name:
+                return
+            kb = await self.manager.context.kb_manager.get_kb_by_name(name)
+            row["kb_missing"] = kb is None
+
+        await asyncio.gather(*(mark_missing(row) for row in out))
         self.logger.info(f"[KBridge] 同步页知识库列表: {len(out)} 项")
         return json_response(out)
 
