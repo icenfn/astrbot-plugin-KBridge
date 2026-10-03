@@ -474,8 +474,9 @@ svg { width: 18px; height: 18px; flex: none; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .platform-grid { grid-template-columns: 1fr 1fr; }
   .sub-card { flex-direction: column; align-items: flex-start; }
+  .sub-main { width: 100%; max-width: 100%; }
   .sub-ops { width: 100%; }
-  .sub-ops .btn { flex: 1; justify-content: center; }
+  .sub-ops .btn { flex: 1; justify-content: center; min-width: 0; }
   .sched-bar #sched-save { flex: 1; justify-content: center; }
   .add-row .btn { flex: 1; justify-content: center; }
   #toast-wrap { left: 18px; right: 18px; }
@@ -589,7 +590,8 @@ svg { width: 18px; height: 18px; flex: none; }
 .switch input:checked + .track::after { left: 18px; }
 .switch input:disabled + .track { opacity: 0.45; cursor: not-allowed; }
 .sub-line2 .dim { color: var(--dim); }
-.sub-ops { display: flex; align-items: center; gap: 8px; flex: none; }
+.sub-ops { display: flex; align-items: center; gap: 8px; flex: none; flex-wrap: wrap; row-gap: 6px; justify-content: flex-end; }
+.switch > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 92px; }
 .empty-state {
   text-align: center;
   color: var(--dim);
@@ -770,8 +772,9 @@ svg { width: 18px; height: 18px; flex: none; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .platform-grid { grid-template-columns: 1fr 1fr; }
   .sub-card { flex-direction: column; align-items: flex-start; }
+  .sub-main { width: 100%; max-width: 100%; }
   .sub-ops { width: 100%; }
-  .sub-ops .btn { flex: 1; justify-content: center; }
+  .sub-ops .btn { flex: 1; justify-content: center; min-width: 0; }
   .sched-bar #sched-save { flex: 1; justify-content: center; }
   .add-row .btn { flex: 1; justify-content: center; }
   #toast-wrap { left: 18px; right: 18px; }
@@ -904,6 +907,7 @@ svg { width: 18px; height: 18px; flex: none; }
   padding: 16px;
   box-shadow: var(--shadow);
 }
+.view .card + .card { margin-top: 16px; }
 
 /* url2kb 分组管理 */
 .u2k-group {

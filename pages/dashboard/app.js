@@ -203,11 +203,20 @@ function renderPlatforms() {
       }).join("")}
     </div>`;
   root.querySelectorAll(".platform-card").forEach((card) => {
-    card.onclick = () => openPlatformConfig(card.dataset.platform);
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".p-toggle")) return; // 开关区域不触发配置弹窗
+      try {
+        openPlatformConfig(card.dataset.platform);
+      } catch (err) {
+        console.error("[KBridge] 打开平台配置失败:", err);
+        toast(`打开配置失败：${err.message}`, "error");
+      }
+    });
   });
   root.querySelectorAll("[data-pen]").forEach((cb) => {
     // 开关点击不触发卡片进入配置
     cb.addEventListener("click", (e) => e.stopPropagation());
+    cb.closest("label")?.addEventListener("click", (e) => e.stopPropagation());
     cb.onchange = async () => {
       const id = cb.dataset.pen;
       try {
