@@ -125,7 +125,7 @@ class KBridge(Star):
             await self.manager.add_schedule_log("warn", "跳过：已有同步任务进行中")
             return
         subs = await self.manager.get_subs()
-        enabled = [s for s in subs if s.enabled and s.sync_enabled]
+        enabled = [s for s in subs if s.enabled]
         if not enabled:
             await self.manager.add_schedule_log("warn", "没有开启定时同步的同步源，跳过本轮")
             return
@@ -169,7 +169,6 @@ class KBridge(Star):
             (f"/{PLUGIN_NAME}/subs/add", self.api_subs_add, ["POST"], "添加 GitHub 仓库"),
             (f"/{PLUGIN_NAME}/subs/remove", self.api_subs_remove, ["POST"], "删除同步源"),
             (f"/{PLUGIN_NAME}/subs/toggle", self.api_subs_toggle, ["POST"], "定时同步开关"),
-            (f"/{PLUGIN_NAME}/subs/toggle-sync", self.api_subs_toggle_sync, ["POST"], "禁用单个知识库同步"),
             (f"/{PLUGIN_NAME}/subs/delete-local", self.api_subs_delete_local, ["POST"], "删除本地知识库"),
             (f"/{PLUGIN_NAME}/sync", self.api_sync, ["POST"], "触发同步"),
             (f"/{PLUGIN_NAME}/sync/cancel", self.api_cancel, ["POST"], "取消同步"),
@@ -547,21 +546,6 @@ class KBridge(Star):
         except ValueError as e:
             return error_response(str(e), status_code=400)
         return json_response({"enabled": sub.enabled, "name": sub.kb_name})
-
-    @webapi_handler
-    async def api_subs_toggle_sync(self):
-        payload = await request.json(default={})
-        kb_id = str(payload.get("kb_id") or "").strip()
-        platform = str(payload.get("platform") or "ima").strip() or "ima"
-        if not kb_id:
-            return error_response("缺少 kb_id", status_code=400)
-        try:
-            sub = await self.manager.set_sub_sync_enabled(
-                kb_id, platform, bool(payload.get("enabled"))
-            )
-        except ValueError as e:
-            return error_response(str(e), status_code=400)
-        return json_response({"sync_enabled": sub.sync_enabled, "name": sub.kb_name})
 
     @webapi_handler
     async def api_schedule_get(self):

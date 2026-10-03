@@ -520,9 +520,9 @@ function subCard(s) {
     s.url_count != null ? `${s.url_count} 个 URL` : `已同步 ${s.synced_count}`,
     s.last_sync_at ? `上次 ${s.last_sync_at.slice(5, 19)}` : "",
   ].filter(Boolean);
-  const syncOff = off || s.sync_enabled === false;
-  const syncBtn = syncOff
-    ? `<button class="btn small" disabled>${ICONS.sync}${off ? "平台已禁用" : "已禁用同步"}</button>`
+  const syncOff = off;
+  const syncBtn = off
+    ? `<button class="btn small" disabled>${ICONS.sync}平台已禁用</button>`
     : syncingThis
       ? `<button class="btn small danger" data-cancel="${esc(s.kb_id)}">${ICONS.bolt}取消 ${cur.total ? `${cur.synced}/${cur.total}` : ""}</button>`
       : otherSyncing
@@ -533,7 +533,6 @@ function subCard(s) {
       <div class="sub-main">
         <div class="sub-line1">
           <span class="sub-name" title="${esc(name)}">${esc(name)}</span>
-          ${s.sync_enabled === false ? '<span class="badge warn">已禁用</span>' : ""}
         </div>
         <div class="sub-line2">
           <span class="badge ${statusCls}" title="${esc(statusTitle)}">${statusText}</span>
@@ -546,13 +545,8 @@ function subCard(s) {
           <span class="track"></span>
           <span>定时同步</span>
         </label>
-        <label class="switch sub-dsen" title="禁用该知识库：手动/全部/定时同步均跳过">
-          <input type="checkbox" data-dsen="${esc(s.kb_id)}" data-platform="${esc(s.platform)}" ${s.sync_enabled === false ? "checked" : ""} ${off ? "disabled" : ""} />
-          <span class="track"></span>
-          <span>禁用同步</span>
-        </label>
         ${syncBtn}
-        <button class="btn small danger sub-dellocal" data-del="${esc(s.kb_id)}" data-dname="${esc(name)}" data-platform="${esc(s.platform)}" ${missing ? "disabled" : ""} title="${missing ? "本地知识库不存在，无需删除" : "删除已同步到 AstrBot 的本地知识库（订阅保留）"}">${ICONS.trash}删除本地</button>
+        ${missing ? "" : `<button class="btn small danger sub-dellocal" data-del="${esc(s.kb_id)}" data-dname="${esc(name)}" data-platform="${esc(s.platform)}" title="删除已同步到 AstrBot 的本地知识库（订阅保留）">${ICONS.trash}删除本地</button>`}
       </div>
     </div>`;
 }
@@ -596,10 +590,9 @@ function renderSubs() {
     html = `<div class="empty-state">暂无同步源 · 先到「平台配置」填写凭据</div>`;
   }
   const totalItems = items.length;
-  const enabledItems = items.filter((x) => x.sync_enabled !== false).length;
   html = `<div class="sub-toolbar">
     <button class="btn primary" data-action="sync-all">${ICONS.sync}同步全部</button>
-    <span class="dim">共 ${totalItems} 个同步源 · ${enabledItems} 个已启用</span>
+    <span class="dim">共 ${totalItems} 个同步源</span>
   </div>` + html;
   root.innerHTML = html;
   const allBtn = root.querySelector("[data-action=sync-all]");
@@ -632,22 +625,6 @@ function renderSubs() {
         await refresh();
       } catch (e) {
         toast(e.message, "error");
-      }
-    };
-  });
-  root.querySelectorAll("[data-dsen]").forEach((t) => {
-    t.onchange = async () => {
-      try {
-        const r = await bridge.apiPost("subs/toggle-sync", {
-          kb_id: t.dataset.dsen,
-          platform: t.dataset.platform || "ima",
-          enabled: t.checked,
-        });
-        toast(`${r.name} 已${r.sync_enabled ? "禁用同步" : "恢复同步"}`, r.sync_enabled ? "warn" : "success");
-        await refresh();
-      } catch (e) {
-        toast(e.message, "error");
-        t.checked = !t.checked; // 回滚
       }
     };
   });
