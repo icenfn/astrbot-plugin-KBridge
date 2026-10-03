@@ -260,7 +260,7 @@ svg { width: 18px; height: 18px; flex: none; }
 .pfield { display: flex; flex-direction: column; gap: 5px; }
 .pfield label { font-size: 12px; color: var(--dim); font-weight: 500; }
 
-/* ---------- 订阅 ---------- */
+/* ---------- 同步 ---------- */
 .add-panel {
   background: var(--panel);
   border: 1px solid var(--border);

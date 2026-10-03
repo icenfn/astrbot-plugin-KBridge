@@ -15,7 +15,7 @@ function esc(s) {
 const VIEW_TITLES = {
   overview: "总览",
   platforms: "平台配置",
-  subs: "订阅管理",
+  subs: "同步管理",
   schedule: "定时任务",
 };
 
@@ -105,7 +105,7 @@ function renderOverview() {
       cls: platOk ? "good" : "warn",
       icon: ICONS.link,
     },
-    { label: "订阅数", value: stats.sub_count, cls: "", icon: ICONS.book },
+    { label: "同步源", value: stats.sub_count, cls: "", icon: ICONS.book },
     { label: "已同步文档", value: stats.total_synced, cls: "", icon: ICONS.check },
     {
       label: "定时同步",
@@ -128,7 +128,7 @@ function renderOverview() {
     <div class="quick-actions">
       <button class="btn primary" data-action="sync-all">${ICONS.sync}同步全部</button>
       <button class="btn" data-action="goto-platforms">${ICONS.link}去配置平台</button>
-      <button class="btn" data-action="goto-subs">${ICONS.book}管理订阅</button>
+      <button class="btn" data-action="goto-subs">${ICONS.book}管理同步</button>
     </div>
     ${!stats.ima_configured ? `<div class="notice warn">IMA 未配置：请到「平台配置」填写 Client ID / API Key</div>` : ""}`;
   bindQuickActions();
@@ -151,7 +151,7 @@ function renderPlatforms() {
     return;
   }
   const platforms = platformConfig.platforms;
-  root.innerHTML = `<p class="lead">配置各知识源平台凭据，订阅同步即基于此连接</p>
+  root.innerHTML = `<p class="lead">配置各知识源平台凭据，同步即基于此连接</p>
     <div class="platform-grid">
       ${Object.entries(platforms).map(([id, p]) => {
         const set = p.supported
@@ -166,7 +166,7 @@ function renderPlatforms() {
             </span>
           </div>
           <div class="platform-name">${p.name}</div>
-          <div class="platform-desc">${p.supported ? "点击配置凭据并管理订阅" : "开发中，敬请期待"}</div>
+          <div class="platform-desc">${p.supported ? "点击配置凭据并管理同步" : "开发中，敬请期待"}</div>
           ${p.supported ? '<div class="platform-form hidden"></div>' : ""}
         </div>`;
       }).join("")}
@@ -244,7 +244,7 @@ function renderSubs() {
       .join("")}</optgroup>`;
   });
   if (!sel) sel = '<option value="">加载 IMA 知识库…</option>';
-  // 订阅列表按平台分组
+  // 同步列表按平台分组
   const subGroups = new Map();
   subs.forEach((s) => {
     const g = s.platform || "ima";
@@ -262,7 +262,7 @@ function renderSubs() {
         </div>`;
     });
   } else {
-    subListHtml = `<div class="empty-state">暂无订阅 · 从上方选择 IMA 知识库添加</div>`;
+    subListHtml = `<div class="empty-state">暂无同步 · 从上方选择 IMA 知识库拉取</div>`;
   }
   root.innerHTML = `
     <div class="add-panel">
@@ -270,9 +270,9 @@ function renderSubs() {
         <select class="input grow" id="sub-kb">
           ${sel || '<option value="">加载 IMA 知识库…</option>'}
         </select>
-        <button class="btn primary" data-action="add-sub">${ICONS.plus}添加</button>
+        <button class="btn primary" data-action="add-sub">${ICONS.plus}拉取</button>
       </div>
-      <p class="add-hint dim">添加后自动创建 AstrBot 知识库（前缀 ${esc(stats?.target_prefix || "ima-")}），无需手动指定目标库名</p>
+      <p class="add-hint dim">拉取后自动创建 AstrBot 知识库（前缀 ${esc(stats?.target_prefix || "ima-")}），无需手动指定目标库名</p>
     </div>
     ${subListHtml}`;
 
@@ -293,7 +293,7 @@ function renderSubs() {
         kb_name: kbName,
         platform,
       });
-      toast(`已添加订阅：${r.sub.kb_name}`);
+      toast(`已拉取：${r.sub.kb_name}`);
       await refresh();
     } catch (e) {
       toast(e.message, false);
@@ -349,7 +349,7 @@ function renderSchedule() {
         <div class="schedule-ic ${on ? "good" : ""}">${ICONS.clock}</div>
         <div>
           <div class="schedule-title">定时自动同步</div>
-          <div class="schedule-desc">按间隔自动拉取订阅知识库增量内容</div>
+          <div class="schedule-desc">按间隔自动同步知识库增量内容</div>
         </div>
         <label class="switch">
           <input id="cron-on" type="checkbox" ${on ? "checked" : ""} />
@@ -428,7 +428,7 @@ async function triggerSync(index = null) {
 async function removeSub(index) {
   try {
     const r = await bridge.apiPost(`subs/${index}/remove`, {});
-    toast(`已删除订阅：${r.name}`);
+    toast(`已删除同步源：${r.name}`);
     await refresh();
   } catch (e) {
     toast(e.message, false);

@@ -1,11 +1,11 @@
-"""KBridge — AstrBot 插件：订阅并同步外部知识源（ima）到 AstrBot 知识库。
+"""KBridge — AstrBot 插件：同步外部知识源（ima）到 AstrBot 知识库。
 
 命令（/kbridge）：
 - /kbridge                   帮助
-- /kbridge kbs               列出 IMA 账号可订阅的知识库
-- /kbridge sub add <id|名称> [--to 目标知识库名]   添加订阅
-- /kbridge sub list          列出订阅
-- /kbridge sub del <序号>    删除订阅
+- /kbridge kbs               列出 IMA 账号可同步的知识库（自建）
+- /kbridge sub add <id|名称> [--to 目标知识库名]   拉取同步源
+- /kbridge sub list          列出同步源
+- /kbridge sub del <序号>    删除同步源
 - /kbridge sync [序号|all]   手动同步（默认 all）
 - /kbridge cron on [分钟]    开启定时同步（默认取配置 sync_interval_minutes）
 - /kbridge cron off         关闭定时同步
@@ -62,18 +62,18 @@ def webapi_handler(func):
     return wrapper
 
 
-HELP_TEXT = """KBridge - 外部知识源订阅同步
+HELP_TEXT = """KBridge - 外部知识源同步
 
-/kbridge kbs                   列出 IMA 知识库
-/kbridge sub add <id|名称> [--to 目标知识库名]   添加订阅
-/kbridge sub list              订阅列表
-/kbridge sub del <序号>        删除订阅
+/kbridge kbs                   列出 IMA 知识库（自建）
+/kbridge sub add <id|名称> [--to 目标知识库名]   拉取同步源
+/kbridge sub list              同步源列表
+/kbridge sub del <序号>        删除同步源
 /kbridge sync [序号|all]       手动同步
 /kbridge cron on [分钟]        开启定时同步
 /kbridge cron off              关闭定时同步"""
 
 
-@register("KBridge", "icenfn", "外部知识源（ima）订阅同步到 AstrBot 知识库", "0.1.0")
+@register("KBridge", "icenfn", "外部知识源（ima）同步到 AstrBot 知识库", "0.1.0")
 class KBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -98,12 +98,12 @@ class KBridge(Star):
     def _register_web_apis(self) -> None:
         routes = [
             (f"/{PLUGIN_NAME}/stats", self.api_stats, ["GET"], "KBridge 总览状态"),
-            (f"/{PLUGIN_NAME}/subs", self.api_subs, ["GET"], "订阅列表"),
-            (f"/{PLUGIN_NAME}/subs/add", self.api_subs_add, ["POST"], "添加订阅"),
-            (f"/{PLUGIN_NAME}/subs/<idx>/remove", self.api_subs_remove, ["POST"], "删除订阅"),
+            (f"/{PLUGIN_NAME}/subs", self.api_subs, ["GET"], "同步源列表"),
+            (f"/{PLUGIN_NAME}/subs/add", self.api_subs_add, ["POST"], "拉取同步源"),
+            (f"/{PLUGIN_NAME}/subs/<idx>/remove", self.api_subs_remove, ["POST"], "删除同步源"),
             (f"/{PLUGIN_NAME}/sync", self.api_sync, ["POST"], "触发同步"),
             (f"/{PLUGIN_NAME}/cron", self.api_cron, ["POST"], "定时同步开关"),
-            (f"/{PLUGIN_NAME}/kbs", self.api_kbs, ["GET"], "IMA 知识库列表"),
+            (f"/{PLUGIN_NAME}/kbs", self.api_kbs, ["GET"], "IMA 自建知识库列表"),
             (f"/{PLUGIN_NAME}/config", self.api_config_get, ["GET"], "读取平台配置"),
             (f"/{PLUGIN_NAME}/config", self.api_config_save, ["POST"], "保存平台配置"),
             (f"/{PLUGIN_NAME}/logs", self.api_logs, ["GET"], "KBridge 同步日志"),
@@ -339,10 +339,13 @@ class KBridge(Star):
     async def api_kbs(self):
         client = await self.manager.get_client()
         items = await _retry_with_backoff(lambda: client.search_knowledge_bases())
+        # 只展示自建知识库：订阅/共享库（base_type="我加入的订阅知识库"）的
+        # 文件无法通过 OpenAPI 读取（220030），拉取必然失败，避免误导
+        items = [it for it in items if it.get("base_type") != "我加入的订阅知识库"]
         # 标记平台来源（供前端 select 分组）
         for it in items:
             it.setdefault("platform", "ima")
-        self.logger.info(f"[KBridge] 查询 IMA 知识库列表: {len(items)} 个")
+        self.logger.info(f"[KBridge] 查询 IMA 自建知识库列表: {len(items)} 个")
         return json_response(items)
 
     async def _bg_sync(self, index: int | None) -> None:
@@ -426,9 +429,11 @@ class KBridge(Star):
     async def _cmd_kbs(self, event: AstrMessageEvent):
         client = await self.manager.get_client()
         items = await _retry_with_backoff(lambda: client.search_knowledge_bases())
+        # 只列自建库（订阅库无法经 OpenAPI 读取文件）
+        items = [it for it in items if it.get("base_type") != "我加入的订阅知识库"]
         if not items:
-            return event.plain_result("IMA 账号下暂无知识库")
-        lines = ["IMA 可订阅知识库："]
+            return event.plain_result("IMA 账号下暂无自建知识库")
+        lines = ["IMA 可同步知识库（自建）："]
         for it in items:
             lines.append(f"• {it.get('name', '?')}  (id: {it.get('id', '?')})")
         return event.plain_result("\n".join(lines))
@@ -440,8 +445,8 @@ class KBridge(Star):
         if action == "list":
             subs = await self.manager.get_subs()
             if not subs:
-                return event.plain_result("暂无订阅。使用 /kbridge kbs 查看可订阅知识库")
-            lines = ["当前订阅："]
+                return event.plain_result("暂无同步源。使用 /kbridge kbs 查看可同步知识库")
+            lines = ["当前同步源："]
             for i, s in enumerate(subs):
                 status = "✔" if s.last_status == "ok" else s.last_status
                 lines.append(
@@ -457,7 +462,7 @@ class KBridge(Star):
             except ValueError:
                 return event.plain_result("序号必须是数字")
             sub = await self.manager.remove_subscription(idx)
-            return event.plain_result(f"已删除订阅: {sub.kb_name} ({sub.kb_id})")
+            return event.plain_result(f"已删除同步源: {sub.kb_name} ({sub.kb_id})")
         if action == "add":
             if len(rest) < 2:
                 return event.plain_result("用法: /kbridge sub add <id|名称> [--to 目标库名]")
@@ -476,7 +481,7 @@ class KBridge(Star):
                 kb_id=matched["id"], kb_name=matched.get("name", matched["id"]), target_kb=target
             )
             return event.plain_result(
-                f"已添加订阅: {sub.kb_name} -> {sub.target_kb or '自动创建'}\n"
+                f"已拉取同步源: {sub.kb_name} -> {sub.target_kb or '自动创建'}\n"
                 f"立即同步: /kbridge sync"
             )
         return event.plain_result(f"未知 sub 操作: {action}")
@@ -484,7 +489,7 @@ class KBridge(Star):
     async def _cmd_sync(self, event: AstrMessageEvent, rest: list[str]):
         subs = await self.manager.get_subs()
         if not subs:
-            yield event.plain_result("暂无订阅，先执行 /kbridge sub add")
+            yield event.plain_result("暂无同步源，先执行 /kbridge sub add")
             return
         if rest and rest[0].isdigit():
             idx = int(rest[0])
@@ -495,7 +500,7 @@ class KBridge(Star):
             r = await self.manager.sync_subscription(subs[idx])
             yield event.plain_result(_format_result(r))
             return
-        yield event.plain_result(f"正在同步 {len(subs)} 个订阅…")
+        yield event.plain_result(f"正在同步 {len(subs)} 个同步源…")
         results = await self.manager.sync_all()
         yield event.plain_result("\n\n".join(_format_result(r) for r in results))
 

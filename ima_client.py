@@ -17,10 +17,11 @@ logger = logging.getLogger("astrbot")
 BASE_URL = "https://ima.qq.com"
 BASE_PATH = "/openapi/wiki/v1"
 
-# 可重试错误码（指数退避）：110010/110021 业务重试，200001 频率超限
-RETRYABLE_CODES = {110010, 110021, 200001}
-# 无权限读取（订阅知识库文件需 ima 客户端授权），不可重试
-PERMISSION_CODES = {220030}
+# 可重试错误码（指数退避）：110010/110021 业务重试，200001 wiki 频控，20002 notes 频控
+RETRYABLE_CODES = {110010, 110021, 200001, 20002}
+# 无权限读取（订阅知识库文件/共享笔记需 ima 客户端授权），不可重试：
+# 220030 wiki 订阅库文件无权限；210005 非笔记作者；210011 共享知识库笔记无权访问；210034 笔记私有且非作者
+PERMISSION_CODES = {220030, 210005, 210011, 210034}
 # HTTP 层限流/服务端错误也重试
 RETRYABLE_HTTP = {403, 429, 500, 502, 503, 504}
 # 官方 skill 版本（随 ima-skills 包更新）
@@ -56,9 +57,14 @@ class IMAClient:
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def post(self, endpoint: str, body: dict[str, Any]) -> dict[str, Any]:
+    async def post(
+        self,
+        endpoint: str,
+        body: dict[str, Any],
+        base_path: str = BASE_PATH,
+    ) -> dict[str, Any]:
         """调用 IMA OpenAPI。返回 data 字段；code != 0 时抛 IMAError。"""
-        url = f"{BASE_URL}{BASE_PATH}/{endpoint}"
+        url = f"{BASE_URL}{base_path}/{endpoint}"
         headers = {
             "ima-openapi-clientid": self._client_id,
             "ima-openapi-apikey": self._api_key,
@@ -150,6 +156,17 @@ class IMAClient:
     async def get_media_info(self, media_id: str) -> dict[str, Any]:
         """获取媒体信息（url_info / notebook_ext_info）。"""
         return await self.post("get_media_info", {"media_id": media_id})
+
+    async def get_doc_content(self, note_id: str) -> dict[str, Any]:
+        """获取笔记纯文本（官方 notes 接口 /openapi/note/v1/get_doc_content）。
+
+        需要笔记作者身份；订阅/共享库中的笔记会返回权限类错误码（210005/210011/210034）。
+        """
+        return await self.post(
+            "get_doc_content",
+            {"note_id": note_id, "target_content_format": 0},
+            base_path="/openapi/note/v1",
+        )
 
 
 async def _retry_with_backoff(

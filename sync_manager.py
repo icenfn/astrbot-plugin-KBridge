@@ -1,8 +1,8 @@
-"""订阅管理与同步核心：IMA 知识库 -> AstrBot 知识库。
+"""同步源管理与同步核心：IMA 知识库 -> AstrBot 知识库。
 
 持久化走插件 KV 存储（AstrBot 官方推荐，随 AstrBot 数据库持久化）：
-- kbridge_subs:   订阅列表
-- kbridge_index:  每个订阅已同步的 media_id -> AstrBot doc_id（增量去重）
+- kbridge_subs:   同步源列表
+- kbridge_index:  每个同步源已同步的 media_id -> AstrBot doc_id（增量去重）
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import Any
 
 import aiohttp
 
-from .ima_client import IMAClient, IMAError, _retry_with_backoff
+from .ima_client import IMAClient, IMAError, PERMISSION_CODES, _retry_with_backoff
 
 logger = logging.getLogger("astrbot")
 
@@ -27,7 +27,9 @@ KV_INDEX = "kbridge_index"
 SUPPORTED_EXT = {"md", "txt", "markdown", "rst", "adoc", "docx", "xlsx", "xls", "pdf", "epub"}
 NOTE_MEDIA_TYPES = {11, 12}
 TEXT_MEDIA_TYPES = {2, 6}  # 网页 / 微信公众号文章
-MAX_ITEM_SAVE = 2000  # 单个订阅单次同步条目上限，防止异常膨胀
+MAX_ITEM_SAVE = 2000  # 单个同步源单次同步条目上限，防止异常膨胀
+# 静默跳过类错误（不计失败）：110020 安全打击/内容违规；210006 笔记已删除
+SKIP_CODES = {110020, 210006}
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _SCRIPT_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
@@ -106,7 +108,7 @@ def _ext_from_url(url: str, media_type: int) -> str | None:
 
 
 class SyncManager:
-    """订阅管理与同步核心。star 为插件实例（提供 KV 存储与专属 logger）。"""
+    """同步源管理与同步核心。star 为插件实例（提供 KV 存储与专属 logger）。"""
 
     def __init__(self, star, context, config):
         self.star = star
@@ -164,30 +166,30 @@ class SyncManager:
             self._sem = asyncio.Semaphore(max(1, int(self.config.get("max_concurrency", 3))))
         return self._sem
 
-    # ---------- 订阅管理 ----------
+    # ---------- 同步源管理 ----------
 
     async def add_subscription(
         self, kb_id: str, kb_name: str = "", target_kb: str = "", platform: str = "ima"
     ) -> Subscription:
         subs = await self.get_subs()
         if any(s.kb_id == kb_id for s in subs):
-            raise ValueError(f"知识库 {kb_id} 已在订阅列表中")
+            raise ValueError(f"知识库 {kb_id} 已在同步源列表中")
         sub = Subscription(kb_id=kb_id, kb_name=kb_name, target_kb=target_kb, platform=platform)
         subs.append(sub)
         await self._save_subs(subs)
-        self.logger.info(f"[KBridge] 添加订阅: {kb_name} ({kb_id}) -> {target_kb or '自动创建'} [{platform}]")
+        self.logger.info(f"[KBridge] 拉取同步源: {kb_name} ({kb_id}) -> {target_kb or '自动创建'} [{platform}]")
         return sub
 
     async def remove_subscription(self, index: int) -> Subscription:
         subs = await self.get_subs()
         if index < 0 or index >= len(subs):
-            raise ValueError(f"订阅序号无效: {index}")
+            raise ValueError(f"同步源序号无效: {index}")
         sub = subs.pop(index)
         await self._save_subs(subs)
         index_data = await self._get_index()
         index_data.pop(sub.kb_id, None)
         await self._save_index()
-        self.logger.info(f"[KBridge] 删除订阅: {sub.kb_name} ({sub.kb_id})")
+        self.logger.info(f"[KBridge] 删除同步源: {sub.kb_name} ({sub.kb_id})")
         return sub
 
     async def resolve_target_kb(self, sub: Subscription):
@@ -239,7 +241,7 @@ class SyncManager:
         )
 
     async def _flush_sub(self, sub: Subscription) -> None:
-        """把 sub 的最新状态写回订阅列表并落库。"""
+        """把 sub 的最新状态写回同步源列表并落库。"""
         subs = await self.get_subs()
         for s in subs:
             if s.kb_id == sub.kb_id:
@@ -254,7 +256,7 @@ class SyncManager:
 
     async def sync_subscription(self, sub: Subscription) -> SyncResult:
         result = SyncResult(kb_id=sub.kb_id)
-        self.logger.info(f"[KBridge] 开始同步订阅: {sub.kb_name} ({sub.kb_id})")
+        self.logger.info(f"[KBridge] 开始同步: {sub.kb_name} ({sub.kb_id})")
         try:
             client = await self.get_client()
             kb, kb_name = await self.resolve_target_kb(sub)
@@ -294,15 +296,15 @@ class SyncManager:
                         result.skipped += 1
                         skip_counts[status] = skip_counts.get(status, 0) + 1
                 except IMAError as e:
-                    if e.code == 110020:
-                        result.skipped += 1  # 安全打击/内容违规，跳过
-                    elif e.code == 220030:
-                        # 订阅知识库文件无权限（需 ima 客户端授权），记一次说明后跳过
+                    if e.code in SKIP_CODES:
+                        result.skipped += 1  # 安全打击/内容违规/笔记已删除，跳过
+                    elif e.code in PERMISSION_CODES:
+                        # 订阅库文件/共享笔记无权限（需 ima 客户端授权），记一次说明后跳过
                         result.skipped += 1
                         if not perm_warned:
                             perm_warned = True
                             result.errors.append(
-                                "IMA 无权限读取订阅知识库文件（code=220030）："
+                                f"IMA 无权限读取（code={e.code}）："
                                 "请在 ima 客户端授权，或改用你自己创建的知识库"
                             )
                     else:
@@ -341,14 +343,14 @@ class SyncManager:
             )
             return result
         except Exception as e:  # noqa: BLE001
-            self.logger.exception(f"同步订阅失败 {sub.kb_id}")
+            self.logger.exception(f"同步失败 {sub.kb_id}")
             sub.last_status = "error"
             sub.last_error = str(e)
             await self._flush_sub(sub)
             raise
 
     async def sync_all(self) -> list[SyncResult]:
-        """同步全部订阅（防重入：已有同步在跑时直接返回空结果）。"""
+        """同步全部同步源（防重入：已有同步在跑时直接返回空结果）。"""
         if self._syncing:
             return []
         async with self._sync_lock:
@@ -384,10 +386,31 @@ class SyncManager:
         media_type = int(info.get("media_type") or 0)
         title = str(item.get("title") or media_id)
 
-        # 笔记/AI 会话：暂不支持，跳过并记录
+        # 笔记/AI 会话：笔记（11）走官方 notes 接口读纯文本入库；无 notebook_id 的跳过
         if media_type in NOTE_MEDIA_TYPES or info.get("notebook_ext_info"):
-            kb_index[media_id] = {"doc_id": "", "title": title, "skipped": "note"}
-            return "note"
+            note_id = (info.get("notebook_ext_info") or {}).get("notebook_id") or ""
+            if not note_id:
+                kb_index[media_id] = {"doc_id": "", "title": title, "skipped": "note"}
+                return "note"
+            # 节流：notes 接口同样受频控
+            await asyncio.sleep(1.0)
+            note_data = await _retry_with_backoff(lambda: client.get_doc_content(note_id))
+            content = str(note_data.get("content") or "").strip()
+            if not content:
+                kb_index[media_id] = {"doc_id": "", "title": title, "skipped": "empty"}
+                return "empty"
+            file_name = f"{_sanitize_filename(title)}.md"
+            doc = await kb.upload_document(
+                file_name=file_name,
+                file_content=content.encode("utf-8"),
+                file_type="md",
+            )
+            kb_index[media_id] = {
+                "doc_id": doc.doc_id,
+                "title": title,
+                "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            return "ok"
 
         url_info = info.get("url_info") or {}
         url = url_info.get("url") or ""
