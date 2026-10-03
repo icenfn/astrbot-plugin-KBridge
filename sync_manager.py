@@ -54,8 +54,9 @@ class Subscription:
     kb_id: str
     kb_name: str
     target_kb: str = ""
-    platform: str = "ima"  # 来源平台：ima / obsidian / github / ...
-    enabled: bool = True
+    platform: str = "ima"  # 来源平台：ima / youdao / github / url2kb
+    enabled: bool = True  # 定时同步开关
+    sync_enabled: bool = True  # 同步总开关：禁用后手动/全部/定时同步均跳过
     last_sync_at: str = ""
     last_status: str = "pending"  # pending | ok | partial | error
     last_error: str = ""
@@ -69,6 +70,7 @@ class Subscription:
             "target_kb": self.target_kb,
             "platform": self.platform,
             "enabled": self.enabled,
+            "sync_enabled": self.sync_enabled,
             "last_sync_at": self.last_sync_at,
             "last_status": self.last_status,
             "last_error": self.last_error,
@@ -323,6 +325,19 @@ class SyncManager:
                 s.enabled = bool(enabled)
                 await self._save_subs(subs)
                 self.logger.info(f"[KBridge] 同步源定时开关: {s.kb_name} -> {s.enabled}")
+                return s
+        raise ValueError("同步源不存在")
+
+    async def set_sub_sync_enabled(
+        self, kb_id: str, platform: str = "ima", enabled: bool = True
+    ) -> Subscription:
+        """开关单个同步源（sync_enabled）：禁用后手动/全部/定时同步均跳过。"""
+        subs = await self.get_subs()
+        for s in subs:
+            if s.kb_id == kb_id and s.platform == (platform or "ima"):
+                s.sync_enabled = bool(enabled)
+                await self._save_subs(subs)
+                self.logger.info(f"[KBridge] 同步源禁用开关: {s.kb_name} -> {s.sync_enabled}")
                 return s
         raise ValueError("同步源不存在")
 
@@ -590,7 +605,7 @@ class SyncManager:
         # 同步源列表状态归零（已同步数/时间/状态）
         sub.synced_count = 0
         sub.last_sync_at = ""
-        sub.last_status = ""
+        sub.last_status = "deleted"
         sub.last_error = ""
         await self._flush_sub(sub)
         return {"name": name, "deleted": deleted}
@@ -674,6 +689,8 @@ class SyncManager:
     async def sync_subscription(self, sub: Subscription) -> SyncResult:
         result = SyncResult(kb_id=sub.kb_id)
         self._check_platform_enabled(sub.platform)  # 平台已禁用时直接拒绝同步
+        if not sub.sync_enabled:
+            raise ValueError(f"同步源已禁用: {sub.kb_name}")
         self._current = sub
         self._current_result = result
         self.logger.info(f"[KBridge] 开始同步: {sub.kb_name} ({sub.kb_id}) [{sub.platform}]")
@@ -1092,7 +1109,7 @@ class SyncManager:
             try:
                 results: list[SyncResult] = []
                 for sub in await self.get_subs():
-                    if not sub.enabled or self.cancel_requested:
+                    if not sub.sync_enabled or self.cancel_requested:
                         continue
                     try:
                         results.append(await self.sync_subscription(sub))

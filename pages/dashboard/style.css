@@ -915,6 +915,14 @@ svg { width: 18px; height: 18px; flex: none; }
   box-shadow: var(--shadow);
 }
 .view .card + .card { margin-top: 16px; }
+.sub-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.sub-toolbar .btn { flex: none; }
+.sub-toolbar .dim { font-size: 12.5px; }
 
 /* url2kb 分组管理 */
 .u2k-wrap { display: flex; flex-direction: column; gap: 12px; }
