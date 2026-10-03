@@ -6,6 +6,14 @@
 
 ### Fixed
 
+- GitHub 同步 400 条左右批量超时（30-seconds-of-code）：`asyncio.TimeoutError`（3.11+ 不属于 `aiohttp.ClientError`）原先不在重试捕获范围，镜像 404 回退官方 raw 后一旦超时直接失败且无重试；已统一捕获超时/连接错误并按 1s/2s/4s 指数退避重试，官方回退同样重试 2 次
+- 同步进行中徽标误显示上次状态（如「已取消」）：同步中的卡片徽标改为实时显示「同步中 x/y」，与取消按钮进度一致
+
+### Changed
+
+- 总览页左上角新增 KBridge Logo（base64 内联，不依赖插件静态资源路由）
+### Fixed
+
 - 同步大型仓库（如 30-seconds-of-code，3300+ 文件）导致服务器卡死/OOM：根因是 GitHub 同步的 `upload_document` 在并发信号量**外**执行，全部文件同时切片 + embedding 向量化入库；已改为**全局入库串行锁**（所有同步源共享 `Semaphore(1)`，下载仍可并发、仅入库严格串行），并将文件处理分块（每批 60 个 task）避免一次性挂起上千协程
 - 有道云/ima 入库同样纳入全局串行锁，多知识库同时同步不再叠加内存压力
 - 同步页点击同步后进度不实时更新（需手动刷新）：手动单源同步时 `is_syncing` 恒为 False 导致轮询首次即被终止，改为以 `stats.current` 判断同步是否结束，进度实时刷新
@@ -14,7 +22,6 @@
 - 删除 AstrBot 知识库后再同步出现「跳过」导致空知识库：目标知识库重建（`resolve_target_kb` 返回 recreated）时清空该同步源增量索引，全量重同步
 - 有道云笔记同步偶发 `read operation timed out`：POST/响应等待超时 30s→120s，失败重试间隔增大
 - 同步列表状态标签被长标题顶出列表外：`.sub-list` 卡片默认 `min-width:auto` 被内容撑爆，已加 `min-width:0` 收缩，状态标签 `flex:none` 固定在元信息行首
-- 同步列表「已同步 x」改为**从 AstrBot 知识库实际读取文档数**（`kb.get_document_count()`），不再依赖插件增量索引；知识库被删除时归零并显示「未同步」
 
 ### Changed
 

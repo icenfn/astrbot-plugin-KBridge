@@ -109,6 +109,14 @@ svg { width: 18px; height: 18px; flex: none; }
   margin-bottom: 18px;
 }
 .topbar h1 { margin: 0; font-size: 22px; font-weight: 700; }
+.top-logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  margin-right: 10px;
+  object-fit: cover;
+  flex: none;
+}
 .topbar-actions { display: flex; align-items: center; gap: 10px; }
 
 .view { display: none; }

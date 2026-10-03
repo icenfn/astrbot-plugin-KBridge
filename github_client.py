@@ -179,26 +179,37 @@ class GitHubClient:
                     if len(data) > 200 * 1024 * 1024:
                         raise GitHubError(f"文件超过 200MB 限制: {relpath}")
                     return data, ext
-            except aiohttp.ClientError as e:
+            except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError) as e:
+                # 超时/连接错误统一重试（3.11+ asyncio.TimeoutError 不属于 ClientError，
+                # 必须单独捕获），退避 1s/2s/4s，避免对官方 raw 高频请求触发限流
                 last_err = e
                 if attempt < 2:
-                    await asyncio.sleep(1.0 * (attempt + 1))
+                    await asyncio.sleep(1.0 * (2**attempt))
                     continue
             except GitHubError as e:
                 if resp.status in (403, 429, 502, 503) and attempt < 2:
                     last_err = e
-                    await asyncio.sleep(1.0 * (attempt + 1))
+                    await asyncio.sleep(1.0 * (2**attempt))
                     continue
                 raise
         raise GitHubError(f"raw 下载网络错误: {relpath}: {last_err}") from last_err
 
     async def _fallback_raw(self, parsed: dict[str, str], full: str) -> tuple[bytes, str]:
-        """镜像 404 时回退官方 raw 源下载。"""
+        """镜像 404 时回退官方 raw 源下载（超时/连接错误同样重试 2 次）。"""
         url = f"{RAW_HOST}/{parsed['owner']}/{parsed['repo']}/{parsed.get('branch', '')}/{full}"
-        session = await self._get_session()
-        async with session.get(url, headers=self._headers(accept_raw=True)) as resp:
-            if resp.status != 200:
-                raise GitHubError(f"raw 下载失败: {full} (HTTP {resp.status})", resp.status)
-            data = await resp.read()
-            ext = full.rsplit(".", 1)[-1].lower() if "." in full else ""
-            return data, ext
+        last_err: Exception | None = None
+        for attempt in range(3):
+            session = await self._get_session()
+            try:
+                async with session.get(url, headers=self._headers(accept_raw=True)) as resp:
+                    if resp.status != 200:
+                        raise GitHubError(f"raw 下载失败: {full} (HTTP {resp.status})", resp.status)
+                    data = await resp.read()
+                    ext = full.rsplit(".", 1)[-1].lower() if "." in full else ""
+                    return data, ext
+            except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError) as e:
+                last_err = e
+                if attempt < 2:
+                    await asyncio.sleep(1.0 * (2**attempt))
+                    continue
+        raise GitHubError(f"raw 下载网络错误: {full}: {last_err}") from last_err

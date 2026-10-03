@@ -332,16 +332,18 @@ function subCard(s) {
   const syncingThis = cur && cur.kb_id === s.kb_id;
   const otherSyncing = (stats?.is_syncing && !syncingThis) || false;
   const missing = !!s.kb_missing;
-  const statusText = missing
-    ? "未同步"
-    : ({
-        ok: "正常",
-        error: "异常",
-        partial: "部分失败",
-        cancelled: "已取消",
-        pending: "待同步",
-      }[s.last_status] || s.last_status);
-  const statusCls = missing ? "err" : s.last_status === "ok" ? "ok" : s.last_status === "error" ? "err" : "warn";
+  const statusText = syncingThis
+    ? `同步中${cur.total ? ` ${cur.synced}/${cur.total}` : ""}`
+    : missing
+      ? "未同步"
+      : ({
+          ok: "正常",
+          error: "异常",
+          partial: "部分失败",
+          cancelled: "已取消",
+          pending: "待同步",
+        }[s.last_status] || s.last_status);
+  const statusCls = syncingThis ? "soon" : missing ? "err" : s.last_status === "ok" ? "ok" : s.last_status === "error" ? "err" : "warn";
   const statusTitle = missing ? "目标知识库已删除，同步时将自动重建" : (s.last_error || "");
   const name = s.display_name || s.kb_name || s.kb_id || "未命名";
   const meta = [
