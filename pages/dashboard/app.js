@@ -248,15 +248,16 @@ async function openPlatformConfig(id) {
         <p class="add-hint dim">支持整个仓库或 tree 子目录；仅导入 AstrBot 可解析格式（md/txt/pdf/docx/xlsx/epub 等）</p>
       </div>` : "";
   const u2Block = id === "url2kb"
-    ? `<div class="gh-section">
-        <div class="gh-head">知识库分组<span class="dim"> · 0</span></div>
-        <div class="u2k-list"><div class="empty-state small">加载中…</div></div>
-        <div class="add-row">
-          <input class="input grow" id="u2k-name" placeholder="分组名称（即 AstrBot 知识库名）" />
-          <input class="input" id="u2k-note" placeholder="备注（可选）" />
-          <button class="btn primary" data-action="add-u2k">${ICONS.plus}添加分组</button>
+    ? `<div class="u2k-wrap">
+        <div class="u2k-add">
+          <div class="u2k-add-title">添加分组<span class="dim"> · 分组名即 AstrBot 知识库名</span></div>
+          <div class="add-row">
+            <input class="input grow" id="u2k-name" placeholder="分组名称" />
+            <input class="input grow" id="u2k-note" placeholder="备注（可选）" />
+            <button class="btn primary" data-action="add-u2k">${ICONS.plus}添加分组</button>
+          </div>
         </div>
-        <p class="add-hint dim">分组名即 AstrBot 知识库名；添加 URL 自动识别网页标题</p>
+        <div class="u2k-groups"><div class="empty-state small">加载中…</div></div>
       </div>` : "";
   await showFullPage({
     title: `${p.name} · 平台配置`,
@@ -331,27 +332,26 @@ async function openPlatformConfig(id) {
 
       // ---- url2kb：分组管理（分组名 = AstrBot 知识库名） ----
       if (id === "url2kb") {
-        const u2Root = body.querySelector(".u2k-list");
-        const u2Head = body.querySelector(".gh-head .dim");
+        const u2Root = body.querySelector(".u2k-groups");
         const h = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
         const groupHtml = (g) => `
           <div class="u2k-group">
             <div class="u2k-head">
               <input class="input u2k-name-i" data-gname="${h(g.id)}" value="${h(g.name)}" placeholder="分组名称" />
+              <input class="input u2k-note-i" data-gnote="${h(g.id)}" value="${h(g.note || "")}" placeholder="备注（可选）" />
               <button class="btn small" data-save-g="${h(g.id)}">保存</button>
-              <button class="btn small danger" data-rmg="${h(g.id)}">${ICONS.trash}</button>
+              <button class="btn small danger" data-rmg="${h(g.id)}" title="删除分组">${ICONS.trash}</button>
             </div>
-            <input class="input u2k-note-i" data-gnote="${h(g.id)}" value="${h(g.note || "")}" placeholder="备注（可选）" />
             <div class="u2k-urls">
               ${(g.urls || []).length ? (g.urls || []).map((u) => `
                 <div class="u2k-url">
-                  <span class="u2k-title" title="${h(u.url)}">${h(u.title || u.url)}</span>
-                  <span class="dim u2k-url2">${h(u.url)}</span>
-                  <button class="btn small danger" data-rmu="${h(g.id)}" data-uid="${h(u.id)}">${ICONS.trash}</button>
+                  <span class="u2k-title" title="${h(u.title || u.url)}">${h(u.title || u.url)}</span>
+                  <span class="dim u2k-url2" title="${h(u.url)}">${h(u.url)}</span>
+                  <button class="btn small danger u2k-rm" data-rmu="${h(g.id)}" data-uid="${h(u.id)}" title="删除 URL">${ICONS.trash}</button>
                 </div>`).join("") : `<div class="empty-state small">暂无 URL</div>`}
               <div class="add-row">
-                <input class="input grow" id="u2k-url-${h(g.id)}" placeholder="https:// 输入网页地址（自动识别标题）" />
-                <button class="btn" data-add-u="${h(g.id)}">添加 URL</button>
+                <input class="input grow" id="u2k-url-${h(g.id)}" placeholder="https:// 输入网页地址" />
+                <button class="btn" data-add-u="${h(g.id)}">${ICONS.plus}添加 URL</button>
               </div>
             </div>
           </div>`;
@@ -359,7 +359,6 @@ async function openPlatformConfig(id) {
           try {
             const r = await bridge.apiGet("url2kb");
             const groups = r.groups || [];
-            if (u2Head) u2Head.textContent = ` · ${groups.length}`;
             u2Root.innerHTML = groups.length
               ? groups.map(groupHtml).join("")
               : `<div class="empty-state small">暂无分组 · 先添加一个分组</div>`;
@@ -404,8 +403,11 @@ async function openPlatformConfig(id) {
         };
         const addUrl = async (gid) => {
           const inp = u2Root.querySelector(`#u2k-url-${gid}`);
+          const btn = u2Root.querySelector(`[data-add-u="${gid}"]`);
           const url = inp?.value?.trim();
           if (!url) { toast("请输入网页地址", "warn"); return; }
+          const idleLabel = `${ICONS.plus}添加 URL`;
+          if (btn) { btn.disabled = true; btn.textContent = "识别中…"; }
           try {
             const r = await bridge.apiPost("url2kb/urls", { action: "add", group_id: gid, url });
             toast(r.title ? `已添加，识别标题：${r.title}` : "已添加（未能自动识别标题）", r.title ? "success" : "warn");
@@ -413,6 +415,7 @@ async function openPlatformConfig(id) {
             await renderU2k();
             await refresh();
           } catch (e) { toast(e.message, "error"); }
+          finally { if (btn) { btn.disabled = false; btn.textContent = idleLabel; } }
         };
         const addGroup = async () => {
           const name = body.querySelector("#u2k-name")?.value?.trim();

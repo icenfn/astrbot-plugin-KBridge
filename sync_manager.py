@@ -480,16 +480,18 @@ class SyncManager:
         return False
 
     async def url2kb_detect_title(self, url: str) -> str:
-        """抓取网页 <title> 识别标题（失败返回空字符串）。"""
-        timeout = aiohttp.ClientTimeout(total=20)
+        """抓取网页 <title> 识别标题（失败返回空字符串）。
+
+        只读取响应前 128KB（<title> 位于 <head> 头部），避免整页下载
+        拖慢「添加 URL」；超时 10s，慢/被墙站点快速回退，页面不卡。
+        """
+        timeout = aiohttp.ClientTimeout(total=10)
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url, headers=headers, allow_redirects=True) as resp:
                 if resp.status != 200:
                     return ""
-                raw = await resp.read()
-                if len(raw) > 2 * 1024 * 1024:
-                    return ""
+                raw = await resp.content.read(128 * 1024)
                 html = raw.decode("utf-8", errors="ignore")
         m = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.S)
         if not m:

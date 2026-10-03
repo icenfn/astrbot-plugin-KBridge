@@ -719,7 +719,7 @@ svg { width: 18px; height: 18px; flex: none; }
 /* ---------- 全屏 Modal（平台配置） ---------- */
 .modal-overlay.full { align-items: stretch; justify-content: center; padding: 0; }
 .modal.full {
-  width: min(560px, 100%);
+  width: min(720px, 100%);
   max-height: 100%;
   border-radius: 0;
   display: flex;
@@ -913,25 +913,40 @@ svg { width: 18px; height: 18px; flex: none; }
 .view .card + .card { margin-top: 16px; }
 
 /* url2kb 分组管理 */
+.u2k-wrap { display: flex; flex-direction: column; gap: 12px; }
+.u2k-add {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: transparent;
+}
+.u2k-add-title { font-weight: 600; font-size: 13px; margin-bottom: 8px; }
+.u2k-add-title .dim { font-weight: 400; margin-left: 6px; }
+.u2k-groups { display: grid; grid-template-columns: 1fr; gap: 10px; align-items: start; }
+@media (min-width: 720px) { .u2k-groups { grid-template-columns: 1fr 1fr; } }
 .u2k-group {
   background: var(--panel2, rgba(127, 127, 127, 0.06));
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 10px;
-  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
 }
-.u2k-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.u2k-name-i { flex: 1; }
-.u2k-note-i { width: 100%; margin-bottom: 8px; }
-.u2k-urls { display: flex; flex-direction: column; gap: 6px; }
+.u2k-head { display: flex; align-items: center; gap: 6px; }
+.u2k-name-i { flex: 1; min-width: 0; }
+.u2k-note-i { flex: 1.3; min-width: 0; }
+.u2k-urls { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .u2k-url {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 5px 8px;
   border-radius: 8px;
   background: var(--panel, rgba(0, 0, 0, 0.03));
   min-width: 0;
 }
-.u2k-title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: none; max-width: 45%; }
-.u2k-url2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.u2k-title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.u2k-url2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 2; font-size: 12px; }
+.u2k-rm { flex: none; }
