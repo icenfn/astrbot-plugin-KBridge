@@ -30,9 +30,9 @@
     "secret": true
   },
   "github_raw_mirror": {
-    "description": "GitHub Raw 加速镜像前缀（可选；如 https://ghfast.top/ ，用于 raw 文件下载加速，留空使用官方 raw.githubusercontent.com）",
+    "description": "GitHub Raw 加速镜像前缀（默认 https://gh.dpik.top/ ；raw 文件下载走镜像，留空使用官方 raw.githubusercontent.com）",
     "type": "string",
-    "default": "",
+    "default": "https://gh.dpik.top/",
     "secret": false
   },
   "max_concurrency": {

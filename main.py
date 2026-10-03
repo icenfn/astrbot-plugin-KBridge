@@ -27,7 +27,7 @@ from astrbot.api.web import error_response, json_response, request
 from .ima_client import IMAError, _retry_with_backoff
 from .github_client import GitHubError, display_name, parse_github_url, sub_key
 from .youdao_client import YoudaoError
-from .sync_manager import SyncManager
+from .sync_manager import DEFAULT_GITHUB_MIRROR, SyncManager
 
 logger = logging.getLogger("astrbot")
 
@@ -235,7 +235,8 @@ class KBridge(Star):
                     "youdao_target_kb": (self.config.get("youdao_target_kb") or "").strip()
                     or "YoudaoNote",
                     "github_token": bool(self.config.get("github_token")),
-                    "github_raw_mirror": (self.config.get("github_raw_mirror") or "").strip(),
+                    "github_raw_mirror": (self.config.get("github_raw_mirror") or "").strip()
+                    or DEFAULT_GITHUB_MIRROR,
                 },
                 "common": {
                     "max_concurrency": int(self.config.get("max_concurrency", 3) or 3),

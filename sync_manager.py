@@ -35,6 +35,7 @@ KV_SUBS = "kbridge_subs"
 KV_INDEX = "kbridge_index"
 KV_SCHED_LOGS = "kbridge_sched_logs"
 MAX_SCHED_LOGS = 100  # 定时同步日志环形上限
+DEFAULT_GITHUB_MIRROR = "https://gh.dpik.top/"  # Raw 加速镜像默认值
 
 SUPPORTED_EXT = {"md", "txt", "markdown", "rst", "adoc", "docx", "xlsx", "xls", "pdf", "epub"}
 NOTE_MEDIA_TYPES = {11, 12}
@@ -187,7 +188,8 @@ class SyncManager:
             if self._github is None:
                 self._github = GitHubClient(
                     (self.config.get("github_token") or "").strip(),
-                    raw_mirror=(self.config.get("github_raw_mirror") or "").strip(),
+                    raw_mirror=(self.config.get("github_raw_mirror") or "").strip()
+                    or DEFAULT_GITHUB_MIRROR,
                 )
             return self._github
         if self._client is None:
@@ -232,6 +234,11 @@ class SyncManager:
 
     async def _save_index(self) -> None:
         await self.star.put_kv_data(KV_INDEX, self._index_cache)
+
+    async def _count_index(self, kb_id: str) -> int:
+        """该同步源当前已入库的文档数（增量索引条目数）。"""
+        index = await self._get_index()
+        return len(index.get(kb_id) or {})
 
     def _semaphore(self) -> asyncio.Semaphore:
         if self._sem is None:
@@ -490,7 +497,7 @@ class SyncManager:
                 await self._sync_github(sub, result)
             else:
                 await self._sync_ima(sub, result)
-            sub.synced_count += result.synced
+            sub.synced_count = await self._count_index(sub.kb_id)
             sub.last_sync_at = time.strftime("%Y-%m-%d %H:%M:%S")
             # 仅真实失败（failed>0）视为 partial；跳过（笔记/无权限/空内容等）不算失败
             if result.failed > 0:
@@ -517,6 +524,7 @@ class SyncManager:
         except _SyncCancelled:
             # 用户取消：已入库部分保留（index 已保存），标记取消状态
             await self._save_index()
+            sub.synced_count = await self._count_index(sub.kb_id)
             sub.last_status = "cancelled"
             sub.last_error = "已取消（已完成部分保留）"
             await self._flush_sub(sub)

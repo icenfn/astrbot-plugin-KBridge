@@ -446,7 +446,8 @@ function startPoll() {
       renderOverview();
       const view = $("view-subs");
       if (view._subs) renderSubs(); // 同步中实时刷新按钮/进度
-      if (!s.is_syncing) {
+      // 手动单源同步时 is_syncing 为 False，用 current 判断同步是否结束
+      if (!s.is_syncing && !s.current) {
         clearInterval(pollTimer);
         pollTimer = null;
         toast("同步完成");

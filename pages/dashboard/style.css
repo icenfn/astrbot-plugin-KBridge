@@ -489,8 +489,17 @@ svg { width: 18px; height: 18px; flex: none; }
   gap: 10px;
   box-shadow: var(--shadow);
 }
-.sub-name { font-weight: 600; font-size: 13.5px; }
-.sub-line1 { display: flex; align-items: center; gap: 8px; }
+.sub-main { flex: 1; min-width: 0; }
+.sub-name {
+  flex: 1;
+  font-weight: 600;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.sub-line1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sub-line2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; }
 .sub-line2 .sep { color: var(--border); }
 

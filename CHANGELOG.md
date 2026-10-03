@@ -6,15 +6,18 @@
 
 ### Fixed
 
+- 同步页点击同步后进度不实时更新（需手动刷新）：手动单源同步时 `is_syncing` 恒为 False 导致轮询首次即被终止，改为以 `stats.current` 判断同步是否结束，进度实时刷新
+- 「已同步 x」计数逻辑修正：改为该同步源**当前已入库文档数**（增量索引长度），重复同步不再累加、知识库重建后自动归位、取消后为已入库部分
 - GitHub tree 子目录同步（如 `/tree/master/packages/docs/src/pages/en`）全部失败：raw 下载 URL 缺少子目录前缀（`fetch_raw` 未拼接 `parsed.path`），已修复；失败条目不再静默，日志输出前 5 条明细
 - 删除 AstrBot 知识库后再同步出现「跳过」导致空知识库：目标知识库重建（`resolve_target_kb` 返回 recreated）时清空该同步源增量索引，全量重同步
 - 有道云笔记同步偶发 `read operation timed out`：POST/响应等待超时 30s→120s，失败重试间隔增大
 
 ### Changed
 
+- Raw 加速镜像默认值改为 `https://gh.dpik.top/`（未配置时自动使用，可在 Github 平台配置中修改或留空回退官方源）
+- 同步列表标题单行显示，超长省略号（`...`）截断
 - 平台名「GitHub Repository」→「Github」
 - GitHub Repository 平台配置 Token 改为**必填**：未配置时添加仓库返回 400 提示；前端保存前校验必填
-- GitHub 平台配置新增可选「Raw 加速镜像」（`github_raw_mirror`，如 `https://ghfast.top/`）：raw 文件走镜像下载，网络类错误自动重试 2 次；镜像 404 自动回退官方源（AstrBot 的 GitHub 加速地址仅作用于插件市场，插件内需单独配置）
 - 定时同步页面重排：间隔输入分组卡片化；同步日志改为**控制台形态**——终端深底、等宽字体、`[OK]/[WARN]/[FAIL]` 级别标签 + 消息字符串着色高亮；超长日志横向滚动查看；新增「清除日志」按钮
 - 删除无用日志（同步页列表数量、拉取同步源等 info 噪音）
 - 项目整理：删除未引用的 `logo-mark.png`，补全 `.gitignore`（保留 `logo.png` 作为插件图标）

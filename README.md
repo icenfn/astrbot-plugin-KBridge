@@ -59,7 +59,7 @@
 | 有道云笔记 | `youdao_api_key` | [https://mopen.163.com](https://mopen.163.com) 获取（需账号绑定手机号） |
 | 有道云笔记 | `youdao_target_kb` | 同步至 AstrBot 知识库名称（默认 `YoudaoNote`） |
 | GitHub | `github_token`（必填） | [https://github.com/settings/tokens](https://github.com/settings/tokens) 生成（勾选 `repo` 权限）；未配置时无法添加仓库 |
-| GitHub | `github_raw_mirror`（可选） | Raw 加速镜像前缀（如 `https://ghfast.top/`），raw 文件下载走镜像；留空使用官方源。AstrBot「设置→网络→GitHub 加速地址」仅作用于插件市场下载，插件内需在此单独配置 |
+| GitHub | `github_raw_mirror`（可选） | Raw 加速镜像前缀（默认 `https://gh.dpik.top/`），raw 文件下载走镜像；留空使用官方源。AstrBot「设置→网络→GitHub 加速地址」仅作用于插件市场下载，插件内需在此单独配置 |
 
 ## WebUI 管理页面
 
