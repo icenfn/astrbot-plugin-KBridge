@@ -2,6 +2,18 @@
 
 本项目的所有显著变更按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 记录，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。版本与 `metadata.yaml` 保持一致。
 
+## [1.1.1] - 2026-10-03
+
+### Removed
+
+- 删除 `/kbridge` 指令组及相关代码（全部操作已由 WebUI 覆盖）
+- 删除平台配置页引导文案（「配置各知识源平台凭据，同步即基于此连接」「点击进入配置」「点击管理网页分组」）
+
+### Changed
+
+- 同步中状态徽标不再显示 `x/y` 进度，统一显示「同步中」（取消按钮同理）
+- Open Notebook 平台配置不再预填默认地址，字段留空 + hint 提示（留空使用默认 `http://localhost:5055`）
+
 ## [1.1.0] - 2026-10-03
 
 ### Added

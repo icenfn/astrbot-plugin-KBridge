@@ -202,8 +202,7 @@ function renderPlatforms() {
     return;
   }
   const platforms = platformConfig.platforms;
-  root.innerHTML = `<p class="lead">配置各知识源平台凭据，同步即基于此连接</p>
-    <div class="platform-grid">
+  root.innerHTML = `<div class="platform-grid">
       ${Object.entries(platforms).map(([id, p]) => {
         const noFields = !(p.fields || []).length;
         const set = p.supported
@@ -220,7 +219,6 @@ function renderPlatforms() {
             </label>
           </div>
           <div class="platform-name">${p.name}</div>
-          <div class="platform-desc">${p.supported ? (off ? "已禁用，点击可查看/修改配置" : (noFields ? "点击管理网页分组" : "点击进入配置")) : "开发中，敬请期待"}</div>
           <span class="badge ${p.supported ? (set ? "ok" : "warn") : "soon"}">
             ${p.supported ? (noFields ? "已就绪" : (set ? "已配置" : "未配置")) : "即将支持"}
           </span>
@@ -295,10 +293,11 @@ async function openPlatformConfig(id) {
         return `
         <div class="pfield">
           <label>${f.label}</label>
+          ${f.hint ? `<small class="f-hint dim">${esc(f.hint)}</small>` : ""}
           <input class="input" data-key="${f.key}" type="${isSecret ? "password" : "text"}"
             autocomplete="off"
             value="${isSecret ? "" : esc(typeof cur === "string" ? cur : "")}"
-            placeholder="${isSecret ? (has ? "已配置（留空保持不变）" : `输入 ${f.label}`) : `默认 ${cur || ""}`}" />
+            placeholder="${f.hint ? esc(f.hint) : (isSecret ? (has ? "已配置（留空保持不变）" : `输入 ${f.label}`) : `默认 ${cur || ""}`)}" />
         </div>`;
       }).join("")}
       ${ghBlock}
@@ -502,7 +501,7 @@ function subCard(s) {
   const otherSyncing = (stats?.is_syncing && !syncingThis) || false;
   const missing = !!s.kb_missing || s.last_status === "deleted";
   const statusText = syncingThis
-    ? `同步中${cur.total ? ` ${cur.synced}/${cur.total}` : ""}`
+    ? "同步中"
     : missing
       ? "未同步"
       : ({
@@ -524,7 +523,7 @@ function subCard(s) {
   const syncBtn = off
     ? `<button class="btn small" disabled>${ICONS.sync}平台已禁用</button>`
     : syncingThis
-      ? `<button class="btn small danger" data-cancel="${esc(s.kb_id)}">${ICONS.bolt}取消 ${cur.total ? `${cur.synced}/${cur.total}` : ""}</button>`
+      ? `<button class="btn small danger" data-cancel="${esc(s.kb_id)}">${ICONS.bolt}取消</button>`
       : otherSyncing
         ? `<button class="btn small" disabled>${ICONS.sync}同步中…</button>`
         : `<button class="btn small" data-kb="${esc(s.kb_id)}" data-platform="${esc(s.platform)}">${ICONS.sync}同步</button>`;

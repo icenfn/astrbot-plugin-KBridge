@@ -3,6 +3,6 @@ display_name: KBridge
 desc: "astrbot 知识库同步插件，装这一个就够了！支持从腾讯 ima、有道云笔记、GitHub、Url、Open Notebook、Memos 等同步，更多支持的平台正在路上..."
 short_desc: 外部知识源一键同步到 AstrBot 知识库
 author: icenfn
-version: v1.1.0
+version: v1.1.1
 repo: https://github.com/icenfn/astrbot-plugin-KBridge
 astrbot_version: ">=4.16"

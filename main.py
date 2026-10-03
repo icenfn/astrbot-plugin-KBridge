@@ -1,12 +1,4 @@
-"""KBridge — AstrBot 插件：同步外部知识源（ima / 有道云笔记 / GitHub 仓库）到 AstrBot 知识库。
-
-命令（/kbridge）：
-- /kbridge                   帮助
-- /kbridge kbs               列出 IMA 账号可同步的知识库（自建）
-- /kbridge sub list          列出同步源
-- /kbridge sub del <序号>    删除同步源
-- /kbridge sync [序号|all]   手动同步（默认 all）
-"""
+"""KBridge — AstrBot 插件：同步外部知识源到 AstrBot 知识库（WebUI 管理）。"""
 
 import asyncio
 import logging
@@ -14,15 +6,13 @@ from functools import wraps
 
 from astrbot.api.all import (
     AstrBotConfig,
-    AstrMessageEvent,
     Context,
     Star,
-    command,
     register,
 )
 from astrbot.api.web import error_response, json_response, request
 
-from .ima_client import IMAError, _retry_with_backoff
+from .ima_client import IMAError
 from .github_client import GitHubError, display_name, parse_github_url, sub_key
 from .youdao_client import YoudaoError
 from .sync_manager import DEFAULT_GITHUB_MIRROR, SyncManager
@@ -53,14 +43,7 @@ def webapi_handler(func):
 
     return wrapper
 
-HELP_TEXT = """KBridge - 外部知识源同步
-
-/kbridge kbs                   列出 IMA 知识库（自建）
-/kbridge sub list              同步源列表
-/kbridge sub del <序号>        删除同步源
-/kbridge sync [序号|all]       手动同步"""
-
-@register("KBridge", "icenfn", "外部知识源（ima）同步到 AstrBot 知识库", "0.1.0")
+@register("KBridge", "icenfn", "astrbot 知识库同步插件，装这一个就够了！支持从腾讯 ima、有道云笔记、GitHub、Url、Open Notebook、Memos 等同步，更多支持的平台正在路上...", "1.1.0")
 class KBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -248,7 +231,8 @@ class KBridge(Star):
                         "fields": [
                             {
                                 "key": "open_notebook_url",
-                                "label": "API 地址（默认 http://localhost:5055）",
+                                "label": "API 地址",
+                                "hint": "留空使用默认 http://localhost:5055",
                                 "secret": False,
                             },
                             {
@@ -290,8 +274,7 @@ class KBridge(Star):
                     "github_token": bool(self.config.get("github_token")),
                     "github_raw_mirror": (self.config.get("github_raw_mirror") or "").strip()
                     or DEFAULT_GITHUB_MIRROR,
-                    "open_notebook_url": (self.config.get("open_notebook_url") or "").strip()
-                    or "http://localhost:5055",
+                    "open_notebook_url": (self.config.get("open_notebook_url") or "").strip(),
                     "open_notebook_password": bool(self.config.get("open_notebook_password")),
                     "memos_url": (self.config.get("memos_url") or "").strip(),
                     "memos_token": bool(self.config.get("memos_token")),
@@ -733,102 +716,3 @@ class KBridge(Star):
             self._sched_task.cancel()
             self._sched_task = None
         await self.manager.close()
-
-    # ---------- 命令 ----------
-
-    @command("kbridge")
-    async def kbridge(self, event: AstrMessageEvent):
-        # 新版 AstrBot：event.message_str 为完整消息（含命令名），先剥离命令前缀
-        raw = (event.message_str or "").strip()
-        tokens = raw.split()
-        if tokens and tokens[0].lstrip("/").lower() == "kbridge":
-            tokens = tokens[1:]
-        if not tokens or tokens[0] in ("help", "h"):
-            yield event.plain_result(HELP_TEXT)
-            return
-        cmd, rest = tokens[0].lower(), tokens[1:]
-        try:
-            if cmd == "kbs":
-                yield await self._cmd_kbs(event)
-            elif cmd == "sub":
-                yield await self._cmd_sub(event, rest)
-            elif cmd == "sync":
-                async for r in self._cmd_sync(event, rest):
-                    yield r
-            else:
-                yield event.plain_result(f"未知命令 {cmd}\n{HELP_TEXT}")
-        except IMAError as e:
-            yield event.plain_result(f"IMA 错误: {e.msg} (code={e.code})")
-        except ValueError as e:
-            yield event.plain_result(f"参数错误: {e}")
-        except Exception as e:  # noqa: BLE001
-            self.logger.exception("KBridge 命令执行失败")
-            yield event.plain_result(f"执行失败: {e}")
-
-    async def _cmd_kbs(self, event: AstrMessageEvent):
-        client = await self.manager.get_client()
-        items = await _retry_with_backoff(lambda: client.search_knowledge_bases())
-        # 只列自建库（订阅库无法经 OpenAPI 读取文件）
-        items = [it for it in items if it.get("base_type") != "我加入的订阅知识库"]
-        if not items:
-            return event.plain_result("IMA 账号下暂无自建知识库")
-        lines = ["IMA 可同步知识库（自建）："]
-        for it in items:
-            lines.append(f"• {it.get('name', '?')}  (id: {it.get('id', '?')})")
-        return event.plain_result("\n".join(lines))
-
-    async def _cmd_sub(self, event: AstrMessageEvent, rest: list[str]):
-        if not rest:
-            return event.plain_result("用法: /kbridge sub list | del <序号>")
-        action = rest[0].lower()
-        if action == "list":
-            subs = await self.manager.get_subs()
-            if not subs:
-                return event.plain_result("暂无同步源。使用 /kbridge kbs 查看可同步知识库")
-            lines = ["当前同步源："]
-            for i, s in enumerate(subs):
-                status = "✔" if s.last_status == "ok" else s.last_status
-                target = s.target_kb or (
-                    "YoudaoNote" if s.platform == "youdao" else "自动"
-                )
-                lines.append(
-                    f"{i}. {s.kb_name} ({s.platform}) -> {target}"
-                    f" | 已同步 {s.synced_count} | {status} | 上次: {s.last_sync_at or '-'}"
-                )
-            return event.plain_result("\n".join(lines))
-        if action == "del":
-            if len(rest) < 2:
-                return event.plain_result("用法: /kbridge sub del <序号>")
-            try:
-                idx = int(rest[1])
-            except ValueError:
-                return event.plain_result("序号必须是数字")
-            sub = await self.manager.remove_subscription(idx)
-            return event.plain_result(f"已删除同步源: {sub.kb_name} ({sub.kb_id})")
-        return event.plain_result(f"未知 sub 操作: {action}")
-
-    async def _cmd_sync(self, event: AstrMessageEvent, rest: list[str]):
-        subs = await self.manager.get_subs()
-        if not subs:
-            yield event.plain_result("暂无同步源，先执行 /kbridge sub add")
-            return
-        if rest and rest[0].isdigit():
-            idx = int(rest[0])
-            if idx >= len(subs):
-                yield event.plain_result(f"序号 {idx} 不存在")
-                return
-            yield event.plain_result(f"正在同步 {subs[idx].kb_name} …")
-            r = await self.manager.sync_subscription(subs[idx])
-            yield event.plain_result(_format_result(r))
-            return
-        yield event.plain_result(f"正在同步 {len(subs)} 个同步源…")
-        results = await self.manager.sync_all()
-        yield event.plain_result("\n\n".join(_format_result(r) for r in results))
-
-def _format_result(r) -> str:
-    lines = [f"同步完成: 共 {r.total} 条"]
-    lines.append(f"新增 {r.synced} | 跳过 {r.skipped} | 失败 {r.failed}")
-    if r.errors:
-        lines.append("失败明细:")
-        lines.extend(f"- {e}" for e in r.errors[:5])
-    return "\n".join(lines)

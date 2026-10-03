@@ -41,9 +41,9 @@
     "default": 3
   },
   "open_notebook_url": {
-    "description": "Open Notebook API 地址（自托管 RAG 服务，默认 http://localhost:5055）",
+    "description": "Open Notebook API 地址（自托管 RAG 服务，留空使用默认 http://localhost:5055）",
     "type": "string",
-    "default": "http://localhost:5055",
+    "default": "",
     "secret": false
   },
   "open_notebook_password": {

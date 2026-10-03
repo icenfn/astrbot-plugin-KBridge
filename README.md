@@ -38,7 +38,6 @@
 - **Open Notebook（beta）**：自托管 RAG 服务（`lfnovo/open-notebook`）接入，页面自动展示 notebooks；同步 notebook 的 sources/notes 内容入库，目标知识库名 = notebook 名
 - **Memos（beta）**：自建 Memos 实例（`usememos/memos`）接入，单库同步源，分页拉取全部备忘录（Markdown）入库，目标知识库名可配置（默认 `Memos`）
 - **WebUI 管理页面**：插件自带 GUI，平台配置、同步管理、定时同步一目了然
-- **命令管理**：`/kbridge` 全命令组
 
 ## 安装
 
@@ -84,16 +83,6 @@
 - **定时同步**：设置间隔（天/时/分/秒）并启用，自动同步已开启「定时」的同步源；页面展示高亮日志（成功/警告/失败）
 - **同步进度**：后台执行 + 自动轮询刷新，同步按钮实时显示 x/y 进度
 
-## 命令
-
-| 命令 | 说明 |
-| --- | --- |
-| `/kbridge` | 帮助 |
-| `/kbridge kbs` | 列出 IMA 账号可同步的知识库（自建） |
-| `/kbridge sub list` | 同步源列表 |
-| `/kbridge sub del <序号>` | 删除同步源 |
-| `/kbridge sync [序号\|all]` | 手动同步 |
-
 ## 定时同步
 
 在「定时同步」页面：
@@ -122,7 +111,7 @@
 
 ```
 astrbot-plugin-KBridge/
-├── main.py            # Star 入口、/kbridge 命令、Web API
+├── main.py            # Star 入口、Web API
 ├── ima_client.py      # IMA OpenAPI 客户端
 ├── youdao_client.py   # 有道云笔记 MCP SSE 客户端（标准库实现）
 ├── github_client.py   # GitHub Git Trees / raw 客户端
