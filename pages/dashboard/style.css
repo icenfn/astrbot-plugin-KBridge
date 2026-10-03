@@ -471,6 +471,7 @@ svg { width: 18px; height: 18px; flex: none; }
 .add-row { display: flex; gap: 10px; flex-wrap: wrap; }
 
 .sub-list { display: flex; flex-direction: column; gap: 6px; }
+.sub-list .sub-card { min-width: 0; } /* flex 子项可收缩，防止长标题撑爆卡片溢出 */
 .sub-group { margin-bottom: 12px; }
 .sub-group-title {
   font-size: 12px;
@@ -499,8 +500,25 @@ svg { width: 18px; height: 18px; flex: none; }
   white-space: nowrap;
   min-width: 0;
 }
-.sub-line1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.sub-line2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; }
+.sub-line1 { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; }
+.sub-line2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+}
+.sub-line2 .badge { flex: none; } /* 状态标签固定不动 */
+.sub-line2 .meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.sub-line2 .meta .dim { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .sub-line2 .sep { color: var(--border); }
 
 /* 定时同步开关（与同步按钮同一行） */

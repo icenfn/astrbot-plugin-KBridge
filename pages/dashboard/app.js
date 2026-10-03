@@ -338,11 +338,11 @@ function subCard(s) {
     <div class="sub-card">
       <div class="sub-main">
         <div class="sub-line1">
-          <span class="sub-name">${esc(name)}</span>
-          <span class="badge ${statusCls}" title="${esc(statusTitle)}">${statusText}</span>
+          <span class="sub-name" title="${esc(name)}">${esc(name)}</span>
         </div>
         <div class="sub-line2">
-          ${meta.map((x) => `<span class="dim">${x}</span>`).join('<span class="sep">·</span>')}
+          <span class="badge ${statusCls}" title="${esc(statusTitle)}">${statusText}</span>
+          <span class="meta">${meta.map((x) => `<span class="dim">${x}</span>`).join('<span class="sep">·</span>')}</span>
         </div>
       </div>
       <div class="sub-ops">
