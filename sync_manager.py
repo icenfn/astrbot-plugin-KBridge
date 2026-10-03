@@ -20,6 +20,13 @@ import aiohttp
 
 from .ima_client import IMAClient, IMAError, PERMISSION_CODES, _retry_with_backoff
 from .youdao_client import YoudaoClient, YoudaoError
+from .github_client import (
+    GitHubClient,
+    GitHubError,
+    IGNORE_SEGMENTS,
+    parse_github_url,
+    sub_key,
+)
 
 logger = logging.getLogger("astrbot")
 
@@ -122,6 +129,7 @@ class SyncManager:
         self.logger = getattr(star, "logger", logger)
         self._client: IMAClient | None = None
         self._youdao: YoudaoClient | None = None
+        self._github: GitHubClient | None = None
         self._index_cache: dict[str, dict[str, Any]] | None = None
         self._sem: asyncio.Semaphore | None = None
         self._sync_lock = asyncio.Lock()
@@ -143,6 +151,10 @@ class SyncManager:
                     raise YoudaoError(0, "未配置有道云笔记 API Key（插件页面「平台配置」中填写）")
                 self._youdao = YoudaoClient(api_key)
             return self._youdao
+        if platform == "github":
+            if self._github is None:
+                self._github = GitHubClient((self.config.get("github_token") or "").strip())
+            return self._github
         if self._client is None:
             client_id = (self.config.get("ima_client_id") or "").strip()
             api_key = (self.config.get("ima_api_key") or "").strip()
@@ -156,6 +168,8 @@ class SyncManager:
             await self._client.close()
         if self._youdao:
             await self._youdao.close()
+        if self._github:
+            await self._github.close()
 
     async def reset_client(self, platform: str = "") -> None:
         """配置变更后重置客户端，使新 Key 生效。platform 为空则全部重置。"""
@@ -165,6 +179,9 @@ class SyncManager:
         if platform in ("", "youdao") and self._youdao:
             await self._youdao.close()
             self._youdao = None
+        if platform in ("", "github") and self._github:
+            await self._github.close()
+            self._github = None
 
     async def get_subs(self) -> list[Subscription]:
         raw = await self.star.get_kv_data(KV_SUBS, [])
@@ -221,6 +238,20 @@ class SyncManager:
         self.logger.info(f"[KBridge] 删除同步源: {sub.kb_name} ({sub.kb_id})")
         return sub
 
+    async def remove_subscription_by_key(self, kb_id: str, platform: str = "ima") -> Subscription:
+        """按 kb_id + platform 删除同步源（页面删除按钮使用，避免列表顺序错位）。"""
+        subs = await self.get_subs()
+        for i, s in enumerate(subs):
+            if s.kb_id == kb_id and s.platform == (platform or "ima"):
+                sub = subs.pop(i)
+                await self._save_subs(subs)
+                index_data = await self._get_index()
+                index_data.pop(sub.kb_id, None)
+                await self._save_index()
+                self.logger.info(f"[KBridge] 删除同步源: {sub.kb_name} ({sub.kb_id})")
+                return sub
+        raise ValueError("同步源不存在")
+
     async def ensure_ima_subs(self) -> list[dict[str, Any]]:
         """确保 IMA 自建知识库均有对应同步源（页面直接展示，无需手动拉取）。
 
@@ -266,7 +297,9 @@ class SyncManager:
     async def resolve_target_kb(self, sub: Subscription):
         """解析/创建目标 AstrBot 知识库，返回 KBHelper 或抛错。
 
-        有道云目标库名取配置 youdao_target_kb（默认 YoudaoNote）；ima 与源同名。
+        有道云目标库名取配置 youdao_target_kb（默认 YoudaoNote）；
+        ima 与源同名；github 取仓库名。
+        创建时自动选择可用的 Embedding 与 Rerank（重排序）Provider。
         """
         kb_mgr = self.context.kb_manager
         if sub.platform == "youdao":
@@ -275,20 +308,39 @@ class SyncManager:
                 or (self.config.get("youdao_target_kb") or "").strip()
                 or "YoudaoNote"
             )
+        elif sub.platform == "github":
+            name = sub.target_kb or self._github_repo_name(sub.kb_id)
         else:
             name = sub.target_kb or sub.kb_name
         kb = await kb_mgr.get_kb_by_name(name)
         if kb:
             return kb, name
-        # 始终自动创建目标知识库（无 auto_create_kb 开关）
+        # 始终自动创建目标知识库（无 auto_create_kb 开关），并默认绑定重排序模型
         embedding_provider_id = await self._pick_embedding_provider_id()
+        rerank_provider_id = await self._pick_rerank_provider_id()
         await kb_mgr.create_kb(
-            name, embedding_provider_id=embedding_provider_id, emoji="📥"
+            name,
+            embedding_provider_id=embedding_provider_id,
+            rerank_provider_id=rerank_provider_id,
+            emoji="📥",
         )
         kb = await kb_mgr.get_kb_by_name(name)
         if kb is None:
             raise ValueError(f"创建知识库失败: {name}")
+        if rerank_provider_id:
+            self.logger.info(
+                f"[KBridge] 知识库 {name} 已绑定重排序模型: {rerank_provider_id}"
+            )
         return kb, name
+
+    @staticmethod
+    def _github_repo_name(kb_id: str) -> str:
+        """从 github 同步源 kb_id（gh:owner/repo@branch:path）提取仓库名。"""
+        try:
+            body = kb_id.split(":", 1)[1]
+            return body.split("/", 1)[1].split("@", 1)[0]
+        except (IndexError, ValueError):
+            return kb_id
 
     async def _pick_embedding_provider_id(self) -> str:
         """返回通过 ProviderManager 校验、确实可用的 Embedding Provider id。
@@ -320,6 +372,29 @@ class SyncManager:
             "嵌入模型（如 OpenAI Embedding），或检查 Provider 是否已生效"
         )
 
+    async def _pick_rerank_provider_id(self) -> str | None:
+        """返回可用的 Rerank（重排序）Provider id；未配置时返回 None（跳过重排序）。
+
+        枚举 ProviderManager.rerank_provider_insts，并经 get_provider_by_id 校验
+        实例确实可用（与 embedding 的选择逻辑一致）。
+        """
+        prov_mgr = getattr(self.context, "provider_manager", None)
+        if prov_mgr is None:
+            return None
+        insts = getattr(prov_mgr, "rerank_provider_insts", None) or []
+        for p in insts:
+            cfg = p.provider_config if isinstance(p.provider_config, dict) else {}
+            pid = cfg.get("id")
+            if not pid:
+                continue
+            try:
+                got = await prov_mgr.get_provider_by_id(pid)
+            except Exception:  # noqa: BLE001
+                got = None
+            if got is not None:
+                return pid
+        return None
+
     async def _flush_sub(self, sub: Subscription) -> None:
         """把 sub 的最新状态写回同步源列表并落库。"""
         subs = await self.get_subs()
@@ -340,6 +415,8 @@ class SyncManager:
         try:
             if sub.platform == "youdao":
                 await self._sync_youdao(sub, result)
+            elif sub.platform == "github":
+                await self._sync_github(sub, result)
             else:
                 await self._sync_ima(sub, result)
             sub.synced_count += result.synced
@@ -533,6 +610,76 @@ class SyncManager:
 
         for note in notes:
             await process(note)
+        await self._save_index()
+
+    async def _sync_github(self, sub: Subscription, result: SyncResult) -> None:
+        """GitHub 仓库同步：Git Trees API 遍历 -> 过滤支持格式 -> raw 下载入库。
+
+        kb_id 为规范化键（gh:owner/repo@branch:path）；tree 模式仅同步指定子目录。
+        """
+        client = await self.get_client("github")
+        kb, kb_name = await self.resolve_target_kb(sub)
+        index = await self._get_index()
+        kb_index = index.setdefault(sub.kb_id, {})
+        parsed = parse_github_url(sub.kb_id.replace("gh:", "https://github.com/", 1))
+
+        # 1. 获取完整文件树，过滤支持格式与忽略目录
+        blobs = await client.get_tree(parsed)
+        prefix = (parsed.get("path") or "").strip("/")
+        files: list[dict[str, str]] = []
+        for b in blobs:
+            path = b.get("path") or ""
+            if prefix and not (path == prefix or path.startswith(prefix + "/")):
+                continue
+            segs = path.split("/")
+            if any(seg in IGNORE_SEGMENTS for seg in segs[:-1]):
+                continue
+            relpath = path[len(prefix) + 1 :] if prefix else path
+            ext = relpath.rsplit(".", 1)[-1].lower() if "." in relpath else ""
+            if ext not in SUPPORTED_EXT:
+                continue
+            files.append({"path": relpath, "size": b.get("size") or 0})
+        if len(files) > MAX_ITEM_SAVE:
+            files = files[:MAX_ITEM_SAVE]
+        result.total = len(files)
+
+        # 2. 逐个文件增量下载入库（并发受限）
+        sem = self._semaphore()
+
+        async def process(f: dict[str, str]) -> None:
+            relpath = f["path"]
+            if relpath in kb_index:
+                result.skipped += 1
+                return
+            try:
+                async with sem:
+                    data, ext = await client.fetch_raw(parsed, relpath)
+                if not data.strip():
+                    kb_index[relpath] = {"doc_id": "", "title": relpath, "skipped": "empty"}
+                    result.skipped += 1
+                    result.skip_counts["empty"] = result.skip_counts.get("empty", 0) + 1
+                    return
+                file_name = f"{_sanitize_filename(relpath)}.{ext}"
+                doc = await kb.upload_document(
+                    file_name=file_name,
+                    file_content=data,
+                    file_type=ext,
+                )
+                kb_index[relpath] = {
+                    "doc_id": doc.doc_id,
+                    "title": relpath,
+                    "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                result.synced += 1
+            except GitHubError as e:
+                result.failed += 1
+                result.errors.append(f"{relpath}: {e.msg}")
+            except Exception as e:  # noqa: BLE001
+                self.logger.exception(f"GitHub 同步条目失败 {relpath}")
+                result.failed += 1
+                result.errors.append(f"{relpath}: {e}")
+
+        await asyncio.gather(*(process(f) for f in files))
         await self._save_index()
 
     async def sync_all(self) -> list[SyncResult]:

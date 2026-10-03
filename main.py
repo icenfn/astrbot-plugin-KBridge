@@ -1,4 +1,4 @@
-"""KBridge — AstrBot 插件：同步外部知识源（ima / 有道云笔记）到 AstrBot 知识库。
+"""KBridge — AstrBot 插件：同步外部知识源（ima / 有道云笔记 / GitHub 仓库）到 AstrBot 知识库。
 
 命令（/kbridge）：
 - /kbridge                   帮助
@@ -25,6 +25,8 @@ from astrbot.api.all import (
 from astrbot.api.web import error_response, json_response, request
 
 from .ima_client import IMAError, _retry_with_backoff
+from .github_client import GitHubError, display_name, parse_github_url, sub_key
+from .youdao_client import YoudaoError
 from .sync_manager import SyncManager
 
 logger = logging.getLogger("astrbot")
@@ -42,6 +44,12 @@ def webapi_handler(func):
         except IMAError as e:
             self.logger.warning(f"API {func.__name__} IMA 错误: code={e.code} msg={e.msg}")
             return error_response(f"IMA 错误: {e.msg}", status_code=400)
+        except GitHubError as e:
+            self.logger.warning(f"API {func.__name__} GitHub 错误: {e.msg}")
+            return error_response(f"GitHub 错误: {e.msg}", status_code=400)
+        except YoudaoError as e:
+            self.logger.warning(f"API {func.__name__} 有道云错误: code={e.code} msg={e.msg}")
+            return error_response(f"有道云错误: {e.msg}", status_code=400)
         except Exception:  # noqa: BLE001
             self.logger.exception(f"API {func.__name__} 未捕获异常")
             return error_response("内部错误，详见 AstrBot 日志", status_code=500)
@@ -77,6 +85,7 @@ class KBridge(Star):
         "ima_api_key": "str",
         "youdao_api_key": "str",
         "youdao_target_kb": "str",
+        "github_token": "str",
         "max_concurrency": "int",
     }
 
@@ -84,6 +93,8 @@ class KBridge(Star):
         routes = [
             (f"/{PLUGIN_NAME}/stats", self.api_stats, ["GET"], "KBridge 总览状态"),
             (f"/{PLUGIN_NAME}/subs", self.api_subs, ["GET"], "可同步知识库列表"),
+            (f"/{PLUGIN_NAME}/subs/add", self.api_subs_add, ["POST"], "添加 GitHub 仓库"),
+            (f"/{PLUGIN_NAME}/subs/remove", self.api_subs_remove, ["POST"], "删除同步源"),
             (f"/{PLUGIN_NAME}/sync", self.api_sync, ["POST"], "触发同步"),
             (f"/{PLUGIN_NAME}/config", self.api_config_get, ["GET"], "读取平台配置"),
             (f"/{PLUGIN_NAME}/config", self.api_config_save, ["POST"], "保存平台配置"),
@@ -117,7 +128,17 @@ class KBridge(Star):
                             },
                         ],
                     },
-                    "github": {"name": "GitHub Repository", "supported": False},
+                    "github": {
+                        "name": "GitHub Repository",
+                        "supported": True,
+                        "fields": [
+                            {
+                                "key": "github_token",
+                                "label": "Token（可选）",
+                                "secret": True,
+                            }
+                        ],
+                    },
                 },
                 "values": {
                     "ima_client_id": (self.config.get("ima_client_id") or "").strip(),
@@ -125,6 +146,7 @@ class KBridge(Star):
                     "youdao_api_key": bool(self.config.get("youdao_api_key")),
                     "youdao_target_kb": (self.config.get("youdao_target_kb") or "").strip()
                     or "YoudaoNote",
+                    "github_token": bool(self.config.get("github_token")),
                 },
                 "common": {
                     "max_concurrency": int(self.config.get("max_concurrency", 3) or 3),
@@ -158,6 +180,7 @@ class KBridge(Star):
         for platform, keys in (
             ("ima", ("ima_client_id", "ima_api_key")),
             ("youdao", ("youdao_api_key",)),
+            ("github", ("github_token",)),
         ):
             if any(k in saved for k in keys):
                 await self.manager.reset_client(platform)
@@ -172,6 +195,7 @@ class KBridge(Star):
         configured = {
             "ima": bool(self.config.get("ima_client_id") and self.config.get("ima_api_key")),
             "youdao": bool(self.config.get("youdao_api_key")),
+            "github": bool(self.config.get("github_token")),
         }
         return json_response(
             {
@@ -185,8 +209,10 @@ class KBridge(Star):
 
     @webapi_handler
     async def api_subs(self):
-        """同步页知识库列表：ima 实时自建库 + 有道云单库，自动补全订阅并合并状态。"""
+        """同步页知识库列表：ima 实时自建库 + 有道云单库 + GitHub 已添加仓库。"""
         out: list[dict] = []
+        subs = await self.manager.get_subs()
+        by_key = {(s.platform, s.kb_id): s for s in subs}
         # ima：实时列表，自动 ensure 订阅（无需手动拉取）
         try:
             items = await self.manager.ensure_ima_subs()
@@ -213,8 +239,51 @@ class KBridge(Star):
             row = sub.to_dict()
             row["display_name"] = "全部笔记"
             out.append(row)
+        # GitHub：手动添加的仓库订阅（不做自动补全）
+        for s in subs:
+            if s.platform != "github":
+                continue
+            row = s.to_dict()
+            row["display_name"] = s.kb_name
+            out.append(row)
         self.logger.info(f"[KBridge] 同步页知识库列表: {len(out)} 项")
         return json_response(out)
+
+    @webapi_handler
+    async def api_subs_add(self):
+        """添加 GitHub 仓库同步源（URL 解析 + 查重）。"""
+        payload = await request.json(default={})
+        platform = str(payload.get("platform") or "").strip() or "ima"
+        if platform != "github":
+            return error_response("仅支持添加 GitHub 仓库同步源", status_code=400)
+        url = str(payload.get("url") or "").strip()
+        if not url:
+            return error_response("缺少仓库 URL", status_code=400)
+        parsed = parse_github_url(url)
+        key = sub_key(parsed)
+        existing = await self.manager.get_sub_by_kb_id(key, "github")
+        if existing is not None:
+            return json_response({"added": False, "exists": True, "sub": existing.to_dict()})
+        sub = await self.manager.add_subscription(
+            kb_id=key,
+            kb_name=display_name(parsed),
+            platform="github",
+        )
+        self.logger.info(f"[KBridge] 添加 GitHub 仓库: {sub.kb_name} -> {key}")
+        return json_response({"added": True, "exists": False, "sub": sub.to_dict()})
+
+    @webapi_handler
+    async def api_subs_remove(self):
+        payload = await request.json(default={})
+        kb_id = str(payload.get("kb_id") or "").strip()
+        platform = str(payload.get("platform") or "ima").strip() or "ima"
+        if not kb_id:
+            return error_response("缺少 kb_id", status_code=400)
+        try:
+            sub = await self.manager.remove_subscription_by_key(kb_id, platform)
+        except ValueError as e:
+            return error_response(str(e), status_code=400)
+        return json_response({"removed": True, "name": sub.kb_name, "platform": sub.platform})
 
     @webapi_handler
     async def api_sync(self):

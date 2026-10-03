@@ -23,6 +23,12 @@
     "default": "YoudaoNote",
     "secret": false
   },
+  "github_token": {
+    "description": "GitHub Token（可选；公开仓库可匿名，私仓或高频同步请填写，https://github.com/settings/tokens 生成）",
+    "type": "string",
+    "default": "",
+    "secret": true
+  },
   "max_concurrency": {
     "description": "同步下载并发数（建议 1-5，受 IMA 接口频控限制）",
     "type": "int",
