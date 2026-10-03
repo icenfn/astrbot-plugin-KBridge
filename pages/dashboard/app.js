@@ -178,9 +178,8 @@ function renderPlatforms() {
         <div class="platform-card ${p.supported ? "" : "soon"} ${off ? "off" : ""}" data-platform="${id}">
           <div class="platform-head">
             <div class="platform-ic ${set ? "good" : ""}">${ICONS.link}</div>
-            <label class="switch p-toggle" title="启用/禁用平台">
+            <label class="p-toggle" title="启用/禁用平台">
               <input type="checkbox" data-pen="${id}" ${off ? "" : "checked"} ${p.supported ? "" : "disabled"} />
-              <span class="track"></span>
               <span>${off ? "已禁用" : "已启用"}</span>
             </label>
           </div>
@@ -368,9 +367,8 @@ function subCard(s) {
         </div>
       </div>
       <div class="sub-ops">
-        <label class="switch sub-toggle" title="定时同步开关">
+        <label class="sub-toggle" title="定时同步开关">
           <input type="checkbox" data-tgl="${esc(s.kb_id)}" data-platform="${esc(s.platform)}" ${s.enabled ? "checked" : ""} ${off ? "disabled" : ""} />
-          <span class="track"></span>
           <span>定时</span>
         </label>
         ${syncBtn}
