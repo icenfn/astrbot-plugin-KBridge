@@ -58,7 +58,7 @@
 | 腾讯 ima | `ima_client_id` / `ima_api_key` | [https://ima.qq.com/agent-interface](https://ima.qq.com/agent-interface) 登录后生成 |
 | 有道云笔记 | `youdao_api_key` | [https://mopen.163.com](https://mopen.163.com) 获取（需账号绑定手机号） |
 | 有道云笔记 | `youdao_target_kb` | 同步至 AstrBot 知识库名称（默认 `YoudaoNote`） |
-| GitHub | `github_token`（可选） | [https://github.com/settings/tokens](https://github.com/settings/tokens) 生成；公开仓库可匿名，私仓/高频同步建议填写 |
+| GitHub | `github_token`（必填） | [https://github.com/settings/tokens](https://github.com/settings/tokens) 生成（勾选 `repo` 权限）；未配置时无法添加仓库 |
 
 ## WebUI 管理页面
 

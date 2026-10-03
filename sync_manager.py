@@ -777,6 +777,8 @@ class SyncManager:
             except GitHubError as e:
                 result.failed += 1
                 result.errors.append(f"{relpath}: {e.msg}")
+                if len(result.errors) <= 5:  # 避免刷屏，最多打印前 5 条
+                    self.logger.warning(f"[KBridge] GitHub 条目失败 {relpath}: {e.msg}")
             except Exception as e:  # noqa: BLE001
                 self.logger.exception(f"GitHub 同步条目失败 {relpath}")
                 result.failed += 1

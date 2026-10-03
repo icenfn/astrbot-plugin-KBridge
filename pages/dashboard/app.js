@@ -284,6 +284,10 @@ async function openPlatformConfig(id) {
           const v = inp.value.trim();
           if (v) fields[inp.dataset.key] = v;
         });
+        if (id === "github" && !platformConfig.values.github_token && !fields.github_token) {
+          toast("GitHub Token 为必填项，请先填写", "warn");
+          return;
+        }
         if (!Object.keys(fields).length) {
           toast("没有需要保存的内容", "warn");
           return;
@@ -482,11 +486,13 @@ async function loadScheduleData(render = true) {
 }
 
 function schedLogHtml(l) {
-  const cls = l.level === "error" ? "err" : l.level === "warn" ? "warn" : "ok";
-  return `<div class="sched-log ${cls}">
-    <span class="sched-log-t">${esc(l.t)}</span>
-    <span class="sched-dot"></span>
-    <span class="sched-log-msg">${esc(l.msg)}</span>
+  const level = l.level === "error" ? "err" : l.level === "warn" ? "warn" : "ok";
+  const tag = { ok: "OK", warn: "WARN", err: "FAIL" }[level];
+  const t = l.t && l.t.length >= 19 ? l.t.slice(5, 19) : l.t;
+  return `<div class="console-line ${level}">
+    <span class="ct">${esc(t)}</span>
+    <span class="cb">[${tag}]</span>
+    <span class="cm">${esc(l.msg)}</span>
   </div>`;
 }
 
@@ -513,10 +519,10 @@ function renderSchedule() {
       </label>
       <div class="sched-interval">
         <span class="dim">间隔</span>
-        <input class="input num" id="sched-d" type="number" min="0" value="${d.days}" /><span>天</span>
-        <input class="input num" id="sched-h" type="number" min="0" value="${d.hours}" /><span>时</span>
-        <input class="input num" id="sched-m" type="number" min="0" value="${d.minutes}" /><span>分</span>
-        <input class="input num" id="sched-s" type="number" min="0" value="${d.seconds}" /><span>秒</span>
+        <div class="iv-group"><input class="input num" id="sched-d" type="number" min="0" value="${d.days}" /><span>天</span></div>
+        <div class="iv-group"><input class="input num" id="sched-h" type="number" min="0" value="${d.hours}" /><span>时</span></div>
+        <div class="iv-group"><input class="input num" id="sched-m" type="number" min="0" value="${d.minutes}" /><span>分</span></div>
+        <div class="iv-group"><input class="input num" id="sched-s" type="number" min="0" value="${d.seconds}" /><span>秒</span></div>
       </div>
       <button class="btn primary" id="sched-save">保存</button>
     </div>
@@ -530,7 +536,7 @@ function renderSchedule() {
           <span class="st err">${nErr} 失败</span>
         </span>
       </div>
-      <div class="sched-log-list">
+      <div class="sched-console">
         ${logs.length ? logs.map(schedLogHtml).join("") : `<div class="empty-state small">暂无日志</div>`}
       </div>
     </div>`;

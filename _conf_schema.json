@@ -24,7 +24,7 @@
     "secret": false
   },
   "github_token": {
-    "description": "GitHub Token（可选；公开仓库可匿名，私仓或高频同步请填写，https://github.com/settings/tokens 生成）",
+    "description": "GitHub Token（必填；https://github.com/settings/tokens 生成，勾选 repo 权限）",
     "type": "string",
     "default": "",
     "secret": true

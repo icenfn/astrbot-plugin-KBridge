@@ -453,6 +453,7 @@ svg { width: 18px; height: 18px; flex: none; }
   .sub-card { flex-direction: column; align-items: flex-start; }
   .sub-ops { width: 100%; }
   .sub-ops .btn { flex: 1; justify-content: center; }
+  .sched-bar #sched-save { flex: 1; justify-content: center; }
   .add-row .btn { flex: 1; justify-content: center; }
   #toast-wrap { left: 18px; right: 18px; }
   .toast { max-width: none; }
@@ -694,6 +695,7 @@ svg { width: 18px; height: 18px; flex: none; }
   .sub-card { flex-direction: column; align-items: flex-start; }
   .sub-ops { width: 100%; }
   .sub-ops .btn { flex: 1; justify-content: center; }
+  .sched-bar #sched-save { flex: 1; justify-content: center; }
   .add-row .btn { flex: 1; justify-content: center; }
   #toast-wrap { left: 18px; right: 18px; }
   .toast { max-width: none; }
@@ -725,20 +727,36 @@ svg { width: 18px; height: 18px; flex: none; }
 .sched-bar {
   display: flex;
   align-items: center;
-  gap: 14px;
+  justify-content: space-between;
+  gap: 12px;
   flex-wrap: wrap;
   padding: 12px 16px;
 }
 .sched-interval {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
-  flex: 1;
-  min-width: 200px;
+  margin-left: auto;
 }
-.sched-interval .input.num { width: 60px; padding: 6px 8px; }
-.sched-interval span { font-size: 12px; color: var(--dim); }
+.sched-interval .iv-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 10px;
+}
+.sched-interval .iv-group:focus-within { border-color: var(--accent); }
+.sched-interval .input.num {
+  width: 52px;
+  padding: 3px 0;
+  border: none;
+  background: transparent;
+  text-align: center;
+}
+.sched-interval .iv-group span { font-size: 12px; color: var(--dim); }
 .switch-label {
   display: inline-flex;
   align-items: center;
@@ -769,42 +787,36 @@ svg { width: 18px; height: 18px; flex: none; }
 .sched-log-stats .st.ok { color: var(--good); }
 .sched-log-stats .st.warn { color: var(--warn); }
 .sched-log-stats .st.err { color: var(--danger); }
-.sched-log-list {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  max-height: min(480px, 60vh);
+
+/* 同步日志：控制台形态（终端深底 + 等宽 + 级别字符串着色） */
+.sched-console {
+  background: #0d1420;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 0;
+  max-height: 420px;
   overflow-y: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
-.sched-log {
+.console-line {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  border-radius: 6px;
-  padding: 4px 8px;
-  background: var(--panel2);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--border);
+  gap: 10px;
+  padding: 3px 14px;
+  font-size: 12px;
+  line-height: 1.55;
 }
-.sched-log-t {
-  flex: none;
-  width: 108px;
-  font-size: 11px;
-  color: var(--dim);
-  font-family: ui-monospace, "SF Mono", Consolas, monospace;
-}
-.sched-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; align-self: center; background: var(--border); }
-.sched-log-msg { flex: 1; font-size: 12.5px; line-height: 1.45; word-break: break-all; }
-.sched-log.ok { border-left-color: var(--good); }
-.sched-log.ok .sched-dot { background: var(--good); }
-.sched-log.ok .sched-log-msg { color: var(--text); }
-.sched-log.warn { border-left-color: var(--warn); }
-.sched-log.warn .sched-dot { background: var(--warn); }
-.sched-log.warn .sched-log-msg { color: var(--warn); }
-.sched-log.err { border-left-color: var(--danger); }
-.sched-log.err .sched-dot { background: var(--danger); }
-.sched-log.err .sched-log-msg { color: var(--danger); }
-.sched-log:hover { background: var(--panel); }
+.console-line .ct { color: #5b6b85; flex: none; }
+.console-line .cb { flex: none; width: 46px; font-weight: 700; }
+.console-line .cm { flex: 1; word-break: break-all; white-space: pre-wrap; }
+.console-line.ok .cb { color: #34d399; }
+.console-line.ok .cm { color: #d1fae5; }
+.console-line.warn .cb { color: #fbbf24; }
+.console-line.warn .cm { color: #fde68a; }
+.console-line.err .cb { color: #f87171; }
+.console-line.err .cm { color: #fecaca; }
+.console-line:hover { background: rgba(255, 255, 255, 0.05); }
+.sched-console .empty-state { color: #5b6b85; }
 
 /* ---------- 通用卡片 ---------- */
 .card {

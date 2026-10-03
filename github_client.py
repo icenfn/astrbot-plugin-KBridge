@@ -151,9 +151,15 @@ class GitHubClient:
         ]
 
     async def fetch_raw(self, parsed: dict[str, str], relpath: str) -> tuple[bytes, str]:
-        """下载文件原始内容。返回 (bytes, 实际扩展名)。"""
+        """下载文件原始内容。返回 (bytes, 实际扩展名)。
+
+        relpath 为相对同步子目录的路径（tree 模式），URL 由
+        branch + parsed.path + relpath 拼接。
+        """
         branch = await self.resolve_default_branch(parsed)
-        url = f"{RAW_HOST}/{parsed['owner']}/{parsed['repo']}/{branch}/{relpath}"
+        prefix = (parsed.get("path") or "").strip("/")
+        full = f"{prefix}/{relpath}".strip("/") if prefix else relpath
+        url = f"{RAW_HOST}/{parsed['owner']}/{parsed['repo']}/{branch}/{full}"
         session = await self._get_session()
         try:
             async with session.get(url, headers=self._headers(accept_raw=True)) as resp:

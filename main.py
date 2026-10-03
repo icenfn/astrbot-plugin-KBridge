@@ -215,7 +215,7 @@ class KBridge(Star):
                         "fields": [
                             {
                                 "key": "github_token",
-                                "label": "Token（可选）",
+                                "label": "GitHub Token（必填）",
                                 "secret": True,
                             }
                         ],
@@ -353,6 +353,8 @@ class KBridge(Star):
         url = str(payload.get("url") or "").strip()
         if not url:
             return error_response("缺少仓库 URL", status_code=400)
+        if not (self.config.get("github_token") or "").strip():
+            return error_response("请先在「GitHub Repository 平台配置」中填写 GitHub Token（必填）", status_code=400)
         try:
             parsed = parse_github_url(url)
         except GitHubError as e:
