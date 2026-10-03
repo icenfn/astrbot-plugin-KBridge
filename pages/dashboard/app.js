@@ -523,7 +523,7 @@ function subCard(s) {
   const syncBtn = off
     ? `<button class="btn small" disabled>${ICONS.sync}平台已禁用</button>`
     : syncingThis
-      ? `<button class="btn small danger" data-cancel="${esc(s.kb_id)}">${ICONS.bolt}取消</button>`
+      ? `<button class="btn small danger" data-cancel="${esc(s.kb_id)}">${ICONS.bolt}取消 ${cur.total ? `${cur.synced}/${cur.total}` : ""}</button>`
       : otherSyncing
         ? `<button class="btn small" disabled>${ICONS.sync}同步中…</button>`
         : `<button class="btn small" data-kb="${esc(s.kb_id)}" data-platform="${esc(s.platform)}">${ICONS.sync}同步</button>`;
