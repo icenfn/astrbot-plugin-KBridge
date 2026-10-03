@@ -6,6 +6,7 @@ let logTimer = null;
 let stats = null;
 let platformConfig = null;
 let kbsCache = [];
+let subsCache = [];
 let activeView = "overview";
 
 function esc(s) {
@@ -16,7 +17,6 @@ const VIEW_TITLES = {
   overview: "总览",
   platforms: "平台配置",
   subs: "同步管理",
-  schedule: "定时任务",
 };
 
 const ICONS = {
@@ -30,17 +30,52 @@ const ICONS = {
   bolt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z"/></svg>',
 };
 
-function toast(message, ok = true) {
+function toast(message, type = "ok") {
+  // type: ok(info 蓝) / success(绿) / error(红) / warn(橙)
   const wrap = $("toast-wrap");
+  while (wrap.children.length >= 4) wrap.firstChild.remove(); // 最多同时 4 条
   const el = document.createElement("div");
-  el.className = "toast " + (ok ? "ok" : "err");
-  el.innerHTML = `<span class="toast-ic">${ok ? ICONS.check : ICONS.bolt}</span><span>${message}</span>`;
+  el.className = "toast " + type;
+  const ic = { ok: ICONS.check, success: ICONS.check, error: ICONS.bolt, warn: ICONS.bolt }[type] || ICONS.check;
+  el.innerHTML = `<span class="toast-ic">${ic}</span><span class="toast-msg">${message}</span><button class="toast-close" aria-label="关闭">×</button>`;
   wrap.append(el);
+  el.querySelector(".toast-close").onclick = () => dismiss(el);
   requestAnimationFrame(() => el.classList.add("show"));
-  setTimeout(() => {
-    el.classList.remove("show");
-    setTimeout(() => el.remove(), 250);
-  }, 2800);
+  const dur = type === "error" ? 5000 : type === "warn" ? 4000 : 2500;
+  setTimeout(() => dismiss(el), dur);
+}
+function dismiss(el) {
+  if (!el || el.classList.contains("out")) return;
+  el.classList.remove("show");
+  el.classList.add("out");
+  setTimeout(() => el.remove(), 220);
+}
+
+function showConfirm({ title, message, danger = false, confirmText = "确认", extraHtml = "" }) {
+  return new Promise((resolve) => {
+    let overlay = document.getElementById("modal-overlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "modal-overlay";
+      overlay.className = "modal-overlay";
+      overlay.innerHTML = `<div class="modal">
+        <div class="modal-head"><span class="modal-title"></span><button class="modal-x" aria-label="关闭">×</button></div>
+        <div class="modal-body"></div>
+        <div class="modal-foot"><button class="btn" data-act="cancel">取消</button><button class="btn primary ${danger ? "danger" : ""}" data-act="ok">确认</button></div>
+      </div>`;
+      document.body.appendChild(overlay);
+      overlay.querySelector(".modal-x").onclick = () => { overlay.classList.remove("open"); resolve(false); };
+      overlay.querySelector('[data-act="cancel"]').onclick = () => { overlay.classList.remove("open"); resolve(false); };
+      overlay.addEventListener("click", (e) => { if (e.target === overlay) { overlay.classList.remove("open"); resolve(false); } });
+    }
+    overlay.querySelector(".modal-title").textContent = title;
+    const body = overlay.querySelector(".modal-body");
+    body.innerHTML = `<div class="modal-msg">${message}</div>${extraHtml}`;
+    const okBtn = overlay.querySelector('[data-act="ok"]');
+    okBtn.textContent = confirmText;
+    okBtn.onclick = () => { overlay.classList.remove("open"); resolve(true); };
+    requestAnimationFrame(() => overlay.classList.add("open"));
+  });
 }
 
 function setSyncUI(syncing) {
@@ -62,7 +97,9 @@ async function loadStats() {
 }
 
 async function loadSubs() {
-  return await bridge.apiGet("subs");
+  const r = await bridge.apiGet("subs");
+  subsCache = r;
+  return r;
 }
 
 async function loadConfig() {
@@ -107,12 +144,6 @@ function renderOverview() {
     },
     { label: "同步源", value: stats.sub_count, cls: "", icon: ICONS.book },
     { label: "已同步文档", value: stats.total_synced, cls: "", icon: ICONS.check },
-    {
-      label: "定时同步",
-      value: stats.cron_enabled ? `每 ${stats.cron_interval} 分钟` : "关闭",
-      cls: stats.cron_enabled ? "good" : "",
-      icon: ICONS.clock,
-    },
   ];
   root.innerHTML = `
     <div class="stat-grid">
@@ -201,7 +232,7 @@ function renderPlatforms() {
       if (cid) fields.ima_client_id = cid;
       if (key) fields.ima_api_key = key;
       if (!Object.keys(fields).length) {
-        toast("没有需要保存的内容", false);
+        toast("没有需要保存的内容", "warn");
         return;
       }
       try {
@@ -214,7 +245,7 @@ function renderPlatforms() {
         renderPlatforms();
         renderOverview();
       } catch (e) {
-        toast(e.message, false);
+        toast(e.message, "error");
       }
     };
   }
@@ -272,16 +303,27 @@ function renderSubs() {
         </select>
         <button class="btn primary" data-action="add-sub">${ICONS.plus}拉取</button>
       </div>
-      <p class="add-hint dim">拉取后自动创建 AstrBot 知识库（前缀 ${esc(stats?.target_prefix || "ima-")}），无需手动指定目标库名</p>
+      <p class="add-hint dim">拉取后自动创建 AstrBot 知识库（名称与 IMA 知识库一致），无需手动指定目标库名</p>
     </div>
-    ${subListHtml}`;
+    ${subListHtml}
+    <div class="log-card">
+      <div class="log-head">
+        <span>同步日志</span>
+        <button class="btn small" data-action="reload-logs">${ICONS.sync}刷新</button>
+      </div>
+      <div class="log-list" id="log-list">
+        <div class="log-empty dim">加载中…</div>
+      </div>
+    </div>`;
 
+  root.querySelector("[data-action=reload-logs]").onclick = loadLogs;
+  loadLogs();
   const addBtn = root.querySelector("[data-action=add-sub]");
   addBtn.onclick = async () => {
     const kbSel = $("sub-kb");
     const kbId = kbSel.value;
     if (!kbId) {
-      toast("请先选择 IMA 知识库", false);
+      toast("请先选择 IMA 知识库", "warn");
       return;
     }
     const opt = kbSel.selectedOptions[0];
@@ -296,7 +338,7 @@ function renderSubs() {
       toast(`已拉取：${r.sub.kb_name}`);
       await refresh();
     } catch (e) {
-      toast(e.message, false);
+      toast(e.message, "error");
     }
   };
   root.querySelectorAll("[data-action=sub-sync]").forEach((b) => {
@@ -323,8 +365,6 @@ function subCard(s, i) {
           <span class="badge ${statusCls}" title="${s.last_error || ""}">${statusText}</span>
         </div>
         <div class="sub-line2">
-          <span class="dim" title="${s.kb_id}">${s.kb_id}</span>
-          <span>→ ${s.target_kb || "自动创建"}</span>
           <span class="dim">已同步 ${s.synced_count}</span>
           <span class="dim">${s.last_sync_at ? `上次 ${s.last_sync_at}` : ""}</span>
         </div>
@@ -336,60 +376,6 @@ function subCard(s, i) {
     </div>`;
 }
 
-function renderSchedule() {
-  const root = $("view-schedule");
-  if (!stats) {
-    root.textContent = "";
-    return;
-  }
-  const on = stats.cron_enabled;
-  root.innerHTML = `
-    <div class="schedule-card">
-      <div class="schedule-head">
-        <div class="schedule-ic ${on ? "good" : ""}">${ICONS.clock}</div>
-        <div>
-          <div class="schedule-title">定时自动同步</div>
-          <div class="schedule-desc">按间隔自动同步知识库增量内容</div>
-        </div>
-        <label class="switch">
-          <input id="cron-on" type="checkbox" ${on ? "checked" : ""} />
-          <span class="slider"></span>
-        </label>
-      </div>
-      <div class="schedule-body">
-        <div class="pfield">
-          <label>同步间隔（分钟）</label>
-          <input class="input" id="cron-minutes" type="number" min="1" value="${stats.cron_interval || 60}" />
-        </div>
-        <button class="btn primary" data-action="save-cron">保存设置</button>
-      </div>
-      <p class="schedule-hint">当前状态：<b>${on ? `每 ${stats.cron_interval} 分钟自动同步` : "已关闭"}</b></p>
-    </div>
-    <div class="log-card">
-      <div class="log-head">
-        <span>同步日志</span>
-        <button class="btn small" data-action="reload-logs">${ICONS.sync}刷新</button>
-      </div>
-      <div class="log-list" id="log-list">
-        <div class="log-empty dim">加载中…</div>
-      </div>
-    </div>`;
-  const save = root.querySelector("[data-action=save-cron]");
-  save.onclick = async () => {
-    const enabled = $("cron-on").checked;
-    const minutes = parseInt($("cron-minutes").value, 10);
-    try {
-      const r = await bridge.apiPost("cron", { on: enabled, minutes: enabled ? minutes || undefined : undefined });
-      toast(r.message);
-      await loadStats();
-      renderSchedule();
-      renderOverview();
-    } catch (e) {
-      toast(e.message, false);
-    }
-  };
-  root.querySelector("[data-action=reload-logs]").onclick = loadLogs;
-}
 
 async function loadLogs() {
   const list = document.getElementById("log-list");
@@ -421,17 +407,30 @@ async function triggerSync(index = null) {
     toast("同步已启动，后台执行中");
     startPoll();
   } catch (e) {
-    toast(e.message, false);
+    toast(e.message, "error");
   }
 }
 
 async function removeSub(index) {
+  const s = subsCache[index];
+  if (!s) return;
+  const kbName = s.target_kb || s.kb_name || "（未知）";
+  const checked = await showConfirm({
+    title: "删除同步源",
+    message: `确定删除同步源「${esc(s.kb_name || s.kb_id)}」？`,
+    danger: true,
+    confirmText: "删除",
+    extraHtml: `<label class="modal-check"><input type="checkbox" id="del-kb-chk" /> 同时删除 AstrBot 知识库「${esc(kbName)}」</label>
+      <p class="modal-warn dim">删除知识库不可恢复，其下所有文档与索引将一并清除</p>`,
+  });
+  if (!checked) return;
+  const delKb = document.getElementById("del-kb-chk")?.checked || false;
   try {
-    const r = await bridge.apiPost(`subs/${index}/remove`, {});
-    toast(`已删除同步源：${r.name}`);
+    const r = await bridge.apiPost(`subs/${index}/remove`, { delete_kb: delKb });
+    toast(delKb && r.kb_deleted ? `已删除同步源与知识库：${r.name}` : `已删除同步源：${r.name}`, "success");
     await refresh();
   } catch (e) {
-    toast(e.message, false);
+    toast(e.message, "error");
   }
 }
 
@@ -460,7 +459,6 @@ async function refresh() {
   view._subs = subs;
   renderSubs();
   renderOverview();
-  renderSchedule();
 }
 
 // ---------- 导航 ----------
@@ -474,10 +472,9 @@ function switchView(view) {
   document.querySelectorAll(".nav-item, .tab-item").forEach((el) => {
     el.classList.toggle("active", el.dataset.view === view);
   });
-  // 定时任务视图：进入即加载日志并 5s 轮询，离开停止
-  if (view === "schedule") {
+  // 同步管理视图：日志 5s 轮询，离开停止
+  if (view === "subs") {
     if (!logTimer) {
-      loadLogs();
       logTimer = setInterval(loadLogs, 5000);
     }
   } else if (logTimer) {
@@ -491,7 +488,6 @@ function renderCurrentView() {
   if (activeView === "overview") renderOverview();
   if (activeView === "platforms") renderPlatforms();
   if (activeView === "subs") renderSubs();
-  if (activeView === "schedule") renderSchedule();
 }
 
 // ---------- 初始化 ----------
@@ -513,7 +509,7 @@ async function main() {
       await refresh();
       toast("已刷新");
     } catch (e) {
-      toast(e.message, false);
+      toast(e.message, "error");
     }
   };
 
@@ -521,7 +517,7 @@ async function main() {
   try {
     await Promise.all([loadStats(), loadConfig()]);
   } catch (e) {
-    toast(e.message, false);
+    toast(e.message, "error");
   }
   const view = $("view-subs");
   try {

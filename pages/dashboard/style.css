@@ -449,7 +449,7 @@ svg { width: 18px; height: 18px; flex: none; }
   position: fixed;
   top: 18px;
   right: 18px;
-  z-index: 100;
+  z-index: 200;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -461,20 +461,96 @@ svg { width: 18px; height: 18px; flex: none; }
   gap: 10px;
   background: var(--panel);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
   border-radius: 12px;
-  padding: 11px 16px;
+  padding: 11px 12px 11px 16px;
   box-shadow: var(--shadow-lg);
   font-size: 13px;
   opacity: 0;
   transform: translateX(16px);
-  transition: all 0.25s;
-  max-width: 320px;
+  transition: all 0.22s;
+  max-width: 340px;
+  pointer-events: auto;
 }
 .toast.show { opacity: 1; transform: none; }
-.toast.ok .toast-ic { color: var(--good); }
-.toast.err .toast-ic { color: var(--danger); }
-.toast-ic { display: flex; }
+.toast.out { opacity: 0; transform: translateX(16px); }
+.toast-msg { flex: 1; line-height: 1.45; overflow-wrap: anywhere; }
+.toast-close {
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.toast-close:hover { opacity: 1; color: var(--fg); }
+.toast.success { border-left-color: var(--good); }
+.toast.success .toast-ic { color: var(--good); }
+.toast.ok { border-left-color: var(--primary); }
+.toast.ok .toast-ic { color: var(--primary); }
+.toast.error { border-left-color: var(--danger); }
+.toast.error .toast-ic { color: var(--danger); }
+.toast.warn { border-left-color: var(--warn); }
+.toast.warn .toast-ic { color: var(--warn); }
+.toast-ic { display: flex; flex-shrink: 0; }
 .toast-ic svg { width: 16px; height: 16px; }
+
+/* ---------- Modal ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+  padding: 20px;
+}
+.modal-overlay.open { opacity: 1; pointer-events: auto; }
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  width: min(420px, 100%);
+  transform: translateY(8px) scale(0.98);
+  transition: transform 0.2s;
+}
+.modal-overlay.open .modal { transform: none; }
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-title { font-weight: 600; font-size: 15px; }
+.modal-x { border: none; background: transparent; color: var(--dim); font-size: 20px; cursor: pointer; line-height: 1; }
+.modal-x:hover { color: var(--fg); }
+.modal-body { padding: 16px 18px; }
+.modal-msg { font-size: 14px; line-height: 1.6; }
+.modal-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.modal-check input { accent-color: var(--danger); width: 15px; height: 15px; }
+.modal-warn { margin-top: 6px; font-size: 12px; }
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 18px 16px;
+}
+.modal-foot .btn { min-width: 84px; justify-content: center; }
 
 /* ---------- 底部导航（移动端） ---------- */
 .tabbar { display: none; }

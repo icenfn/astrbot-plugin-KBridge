@@ -195,7 +195,7 @@ class SyncManager:
     async def resolve_target_kb(self, sub: Subscription):
         """解析/创建目标 AstrBot 知识库，返回 KBHelper 或抛错。"""
         kb_mgr = self.context.kb_manager
-        name = sub.target_kb or f"{self.config.get('target_kb_prefix', 'ima-')}{sub.kb_name}"
+        name = sub.target_kb or sub.kb_name
         kb = await kb_mgr.get_kb_by_name(name)
         if kb:
             return kb, name
@@ -320,8 +320,8 @@ class SyncManager:
             await self._save_index()
             sub.synced_count += result.synced
             sub.last_sync_at = time.strftime("%Y-%m-%d %H:%M:%S")
-            # 全部条目被跳过（未真正入库）也视为 partial，避免误报成功
-            if result.failed > 0 or (result.total > 0 and result.synced == 0):
+            # 仅真实失败（failed>0）视为 partial；跳过（笔记/无链接/无权限等）不算失败
+            if result.failed > 0:
                 sub.last_status = "partial"
             else:
                 sub.last_status = "ok"

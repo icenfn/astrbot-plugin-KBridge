@@ -11,18 +11,8 @@
     "default": "",
     "secret": true
   },
-  "sync_interval_minutes": {
-    "description": "定时自动同步间隔（分钟），0 表示不启用自动同步",
-    "type": "int",
-    "default": 60
-  },
-  "target_kb_prefix": {
-    "description": "目标 AstrBot 知识库名称前缀（自动创建时使用，如 ima-）",
-    "type": "string",
-    "default": "ima-"
-  },
   "auto_create_kb": {
-    "description": "目标 AstrBot 知识库不存在时自动创建",
+    "description": "目标 AstrBot 知识库不存在时自动创建（名称与 IMA 知识库一致）",
     "type": "bool",
     "default": true
   },

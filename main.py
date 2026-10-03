@@ -7,8 +7,6 @@
 - /kbridge sub list          列出同步源
 - /kbridge sub del <序号>    删除同步源
 - /kbridge sync [序号|all]   手动同步（默认 all）
-- /kbridge cron on [分钟]    开启定时同步（默认取配置 sync_interval_minutes）
-- /kbridge cron off         关闭定时同步
 """
 
 from __future__ import annotations
@@ -36,7 +34,6 @@ from .sync_manager import SyncManager
 logger = logging.getLogger("astrbot")
 
 PLUGIN_NAME = "astrbot_plugin_kbridge"
-CRON_JOB_NAME = "kbridge_auto_sync"
 
 # 解析 AstrBot 日志文件行: [时间] [tag] [LEVEL] [vX] [file:line]: message
 _LOG_LINE_RE = re.compile(
@@ -65,12 +62,10 @@ def webapi_handler(func):
 HELP_TEXT = """KBridge - 外部知识源同步
 
 /kbridge kbs                   列出 IMA 知识库（自建）
-/kbridge sub add <id|名称> [--to 目标知识库名]   拉取同步源
+/kbridge sub add <id|名称> [--to 目标库名]   拉取同步源
 /kbridge sub list              同步源列表
 /kbridge sub del <序号>        删除同步源
-/kbridge sync [序号|all]       手动同步
-/kbridge cron on [分钟]        开启定时同步
-/kbridge cron off              关闭定时同步"""
+/kbridge sync [序号|all]       手动同步"""
 
 
 @register("KBridge", "icenfn", "外部知识源（ima）同步到 AstrBot 知识库", "0.1.0")
@@ -79,8 +74,6 @@ class KBridge(Star):
         super().__init__(context)
         self.config = config
         self.manager = SyncManager(self, context, config)
-        self._cron_job_id: str | None = None
-        self._cron_initialized = False
         self._register_web_apis()
 
     # ---------- WebUI 页面 API ----------
@@ -89,9 +82,7 @@ class KBridge(Star):
     CONFIG_WRITABLE = {
         "ima_client_id": "str",
         "ima_api_key": "str",
-        "target_kb_prefix": "str",
         "auto_create_kb": "bool",
-        "sync_interval_minutes": "int",
         "max_concurrency": "int",
     }
 
@@ -102,7 +93,6 @@ class KBridge(Star):
             (f"/{PLUGIN_NAME}/subs/add", self.api_subs_add, ["POST"], "拉取同步源"),
             (f"/{PLUGIN_NAME}/subs/<idx>/remove", self.api_subs_remove, ["POST"], "删除同步源"),
             (f"/{PLUGIN_NAME}/sync", self.api_sync, ["POST"], "触发同步"),
-            (f"/{PLUGIN_NAME}/cron", self.api_cron, ["POST"], "定时同步开关"),
             (f"/{PLUGIN_NAME}/kbs", self.api_kbs, ["GET"], "IMA 自建知识库列表"),
             (f"/{PLUGIN_NAME}/config", self.api_config_get, ["GET"], "读取平台配置"),
             (f"/{PLUGIN_NAME}/config", self.api_config_save, ["POST"], "保存平台配置"),
@@ -195,9 +185,7 @@ class KBridge(Star):
                     "ima_api_key": bool(self.config.get("ima_api_key")),
                 },
                 "common": {
-                    "target_kb_prefix": self.config.get("target_kb_prefix", "ima-"),
                     "auto_create_kb": bool(self.config.get("auto_create_kb", True)),
-                    "sync_interval_minutes": int(self.config.get("sync_interval_minutes", 60) or 0),
                     "max_concurrency": int(self.config.get("max_concurrency", 3) or 3),
                 },
             }
@@ -228,10 +216,6 @@ class KBridge(Star):
         # 凭据变更后重置 IMA 客户端
         if "ima_client_id" in saved or "ima_api_key" in saved:
             await self.manager.reset_client()
-        # 同步间隔变更后重建定时任务
-        if "sync_interval_minutes" in saved:
-            minutes = int(self.config.get("sync_interval_minutes", 0) or 0)
-            await self._set_cron(minutes > 0, minutes if minutes > 0 else None)
         self.logger.info(f"[KBridge] 页面保存平台配置成功: {saved}")
         return json_response({"saved": saved})
 
@@ -243,13 +227,10 @@ class KBridge(Star):
                 "sub_count": len(subs),
                 "total_synced": sum(s.synced_count for s in subs),
                 "is_syncing": self.manager.is_syncing,
-                "cron_enabled": self._cron_job_id is not None,
-                "cron_interval": int(self.config.get("sync_interval_minutes", 60) or 0),
                 "ima_configured": bool(
                     self.config.get("ima_client_id") and self.config.get("ima_api_key")
                 ),
                 "auto_create_kb": bool(self.config.get("auto_create_kb", True)),
-                "target_prefix": self.config.get("target_kb_prefix", "ima-"),
             }
         )
 
@@ -303,7 +284,17 @@ class KBridge(Star):
             sub = await self.manager.remove_subscription(idx)
         except ValueError as e:
             return error_response(str(e), status_code=400)
-        return json_response({"removed": True, "name": sub.kb_name})
+        # 可选：同时删除对应的 AstrBot 知识库
+        kb_deleted = False
+        payload = await request.json(default={})
+        if payload.get("delete_kb"):
+            name = sub.target_kb or sub.kb_name
+            kb_mgr = self.context.kb_manager
+            kb = await kb_mgr.get_kb_by_name(name)
+            if kb is not None:
+                await kb_mgr.delete_kb(kb.kb.kb_id)
+                kb_deleted = True
+        return json_response({"removed": True, "name": sub.kb_name, "kb_deleted": kb_deleted})
 
     @webapi_handler
     async def api_sync(self):
@@ -318,22 +309,6 @@ class KBridge(Star):
                 return error_response("index 必须是数字", status_code=400)
         asyncio.get_running_loop().create_task(self._bg_sync(index))
         return json_response({"started": True})
-
-    @webapi_handler
-    async def api_cron(self):
-        payload = await request.json(default={})
-        on = bool(payload.get("on"))
-        minutes = payload.get("minutes")
-        if minutes is not None:
-            try:
-                minutes = int(minutes)
-            except (TypeError, ValueError):
-                return error_response("minutes 必须是数字", status_code=400)
-        try:
-            desc, enabled = await self._set_cron(on, minutes)
-        except ValueError as e:
-            return error_response(str(e), status_code=400)
-        return json_response({"enabled": enabled, "message": desc})
 
     @webapi_handler
     async def api_kbs(self):
@@ -362,36 +337,8 @@ class KBridge(Star):
 
     # ---------- 生命周期 ----------
 
-    async def initialize(self) -> None:
-        try:
-            await self._sync_cron_job()
-            self._cron_initialized = True
-        except Exception:  # noqa: BLE001
-            self.logger.exception("KBridge 初始化定时任务失败")
-
     async def terminate(self) -> None:
         await self.manager.close()
-
-    # ---------- 定时同步 ----------
-
-    async def _auto_sync(self) -> None:
-        self.logger.info("KBridge 定时同步开始")
-        try:
-            results = await self.manager.sync_all()
-            for r in results:
-                self.logger.info(
-                    f"KBridge 同步 {r.kb_id}: 新增 {r.synced}, 跳过 {r.skipped}, 失败 {r.failed}"
-                )
-        except Exception:  # noqa: BLE001
-            self.logger.exception("KBridge 定时同步失败")
-
-    async def _sync_cron_job(self) -> None:
-        """根据配置 sync_interval_minutes 同步定时任务状态。"""
-        minutes = int(self.config.get("sync_interval_minutes", 60) or 0)
-        try:
-            await self._set_cron(minutes > 0, minutes if minutes > 0 else None)
-        except Exception:  # noqa: BLE001
-            self.logger.exception("KBridge 初始化定时任务失败")
 
     # ---------- 命令 ----------
 
@@ -414,8 +361,6 @@ class KBridge(Star):
             elif cmd == "sync":
                 async for r in self._cmd_sync(event, rest):
                     yield r
-            elif cmd == "cron":
-                yield await self._cmd_cron(event, rest)
             else:
                 yield event.plain_result(f"未知命令 {cmd}\n{HELP_TEXT}")
         except IMAError as e:
@@ -503,54 +448,6 @@ class KBridge(Star):
         yield event.plain_result(f"正在同步 {len(subs)} 个同步源…")
         results = await self.manager.sync_all()
         yield event.plain_result("\n\n".join(_format_result(r) for r in results))
-
-    async def _set_cron(self, on: bool, minutes: int | None = None) -> tuple[str, bool]:
-        """开启/关闭定时同步。返回 (描述, 是否启用)。"""
-        cron_mgr = self.context.cron_manager
-        # 先清理现有任务
-        try:
-            jobs = await cron_mgr.list_jobs()
-            for job in jobs:
-                if job.name == CRON_JOB_NAME:
-                    if job.job_id == self._cron_job_id:
-                        self._cron_job_id = None
-                    await cron_mgr.delete_job(job.job_id)
-        except Exception:  # noqa: BLE001
-            self.logger.warning("KBridge 清理定时任务失败", exc_info=True)
-        if not on:
-            self._cron_job_id = None
-            return "已关闭定时同步", False
-        if minutes is None or minutes <= 0:
-            minutes = int(self.config.get("sync_interval_minutes", 60) or 60)
-        self.config["sync_interval_minutes"] = minutes
-        self.config.save_config()
-        job = await cron_mgr.add_basic_job(
-            name=CRON_JOB_NAME,
-            cron_expression=_minutes_to_cron(minutes),
-            handler=self._auto_sync,
-            description="KBridge 定时同步外部知识源",
-            persistent=False,
-        )
-        self._cron_job_id = job.job_id
-        return f"已开启定时同步：每 {minutes} 分钟", True
-
-    async def _cmd_cron(self, event: AstrMessageEvent, rest: list[str]):
-        if not rest or rest[0] not in ("on", "off"):
-            return event.plain_result("用法: /kbridge cron on [分钟] | off")
-        if rest[0] == "off":
-            desc, _ = await self._set_cron(False)
-            return event.plain_result(desc)
-        minutes = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else None
-        desc, _ = await self._set_cron(True, minutes)
-        return event.plain_result(desc)
-
-
-def _minutes_to_cron(minutes: int) -> str:
-    minutes = max(1, minutes)
-    if minutes < 60:
-        return f"*/{minutes} * * * *"
-    hours = minutes // 60
-    return f"0 */{hours} * * *"
 
 
 def _format_result(r) -> str:
