@@ -2,6 +2,18 @@
 
 本项目的所有显著变更按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 记录，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。版本与 `metadata.yaml` 保持一致。
 
+## [1.1.0] - 2026-10-03
+
+### Added
+
+- **Open Notebook（beta）**：自托管 RAG 服务（默认 `http://localhost:5055`）接入，页面自动展示 notebooks 并创建同步源；同步 notebook 的 sources/notes 内容入库（目标知识库名 = notebook 名），sources 端点缺失时自动回退 notes（兼容版本差异）
+- **Memos（beta）**：自建 [usememos.com](https://usememos.com/) 实例接入，单库同步源，分页拉取全部备忘录（Markdown 内容）入库，目标知识库名可配置（默认 `Memos`）
+- 平台配置新增 `open_notebook_url` / `open_notebook_password` / `memos_url` / `memos_token` / `memos_target_kb` 字段；两个平台均支持启用/禁用、增量去重、定时同步
+
+### Fixed
+
+- 平台禁用列表补齐 Open Notebook / Memos（默认启用）
+
 ## [1.0.0] - 2026-10-03
 
 ### Added

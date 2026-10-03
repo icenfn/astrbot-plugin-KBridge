@@ -159,6 +159,11 @@ class KBridge(Star):
         "youdao_target_kb": "str",
         "github_token": "str",
         "github_raw_mirror": "str",
+        "open_notebook_url": "str",
+        "open_notebook_password": "str",
+        "memos_url": "str",
+        "memos_token": "str",
+        "memos_target_kb": "str",
         "max_concurrency": "int",
     }
 
@@ -236,6 +241,45 @@ class KBridge(Star):
                         "enabled": enabled.get("url2kb", True),
                         "fields": [],
                     },
+                    "opennotebook": {
+                        "name": "Open Notebook（beta）",
+                        "supported": True,
+                        "enabled": enabled.get("opennotebook", True),
+                        "fields": [
+                            {
+                                "key": "open_notebook_url",
+                                "label": "API 地址（默认 http://localhost:5055）",
+                                "secret": False,
+                            },
+                            {
+                                "key": "open_notebook_password",
+                                "label": "API 密码（未启用 OPEN_NOTEBOOK_PASSWORD 可留空）",
+                                "secret": True,
+                            },
+                        ],
+                    },
+                    "memos": {
+                        "name": "Memos（beta）",
+                        "supported": True,
+                        "enabled": enabled.get("memos", True),
+                        "fields": [
+                            {
+                                "key": "memos_url",
+                                "label": "Memos 实例地址（如 https://memos.example.com）",
+                                "secret": False,
+                            },
+                            {
+                                "key": "memos_token",
+                                "label": "API Token（必填，Memos 设置 → 我的账户 → 访问令牌）",
+                                "secret": True,
+                            },
+                            {
+                                "key": "memos_target_kb",
+                                "label": "同步至 AstrBot 知识库（默认 Memos）",
+                                "secret": False,
+                            },
+                        ],
+                    },
                 },
                 "values": {
                     "ima_client_id": (self.config.get("ima_client_id") or "").strip(),
@@ -246,6 +290,13 @@ class KBridge(Star):
                     "github_token": bool(self.config.get("github_token")),
                     "github_raw_mirror": (self.config.get("github_raw_mirror") or "").strip()
                     or DEFAULT_GITHUB_MIRROR,
+                    "open_notebook_url": (self.config.get("open_notebook_url") or "").strip()
+                    or "http://localhost:5055",
+                    "open_notebook_password": bool(self.config.get("open_notebook_password")),
+                    "memos_url": (self.config.get("memos_url") or "").strip(),
+                    "memos_token": bool(self.config.get("memos_token")),
+                    "memos_target_kb": (self.config.get("memos_target_kb") or "").strip()
+                    or "Memos",
                 },
                 "common": {
                     "max_concurrency": int(self.config.get("max_concurrency", 3) or 3),
@@ -289,11 +340,15 @@ class KBridge(Star):
             ("ima", ("ima_client_id", "ima_api_key")),
             ("youdao", ("youdao_api_key",)),
             ("github", ("github_token", "github_raw_mirror")),
+            ("opennotebook", ("open_notebook_url", "open_notebook_password")),
+            ("memos", ("memos_url", "memos_token")),
         ):
             if any(k in saved for k in keys):
                 await self.manager.reset_client(platform)
         if "youdao_target_kb" in saved:
             await self.manager.ensure_youdao_sub()
+        if "memos_target_kb" in saved:
+            await self.manager.ensure_memos_sub()
         self.logger.info(f"[KBridge] 页面保存平台配置成功: {saved}")
         return json_response({"saved": saved})
 
@@ -425,6 +480,35 @@ class KBridge(Star):
             row = sub.to_dict()
             row["display_name"] = sub.target_kb or sub.kb_name or "YoudaoNote"
             out.append(row)
+        # Open Notebook（beta）：实时列出 notebooks 并自动 ensure 订阅
+        if (self.config.get("open_notebook_url") or "").strip():
+            try:
+                items = await self.manager.ensure_opennotebook_subs()
+                subs = await self.manager.get_subs()
+                by_key = {(s.platform, s.kb_id): s for s in subs}
+                for it in items:
+                    nid = str(it.get("id") or "")
+                    if not nid:
+                        continue
+                    sub = by_key.get(("opennotebook", nid))
+                    if sub is None:
+                        continue
+                    row = sub.to_dict()
+                    row["display_name"] = it.get("name") or sub.kb_name
+                    out.append(row)
+            except Exception:  # noqa: BLE001
+                self.logger.exception("查询 Open Notebook 失败")
+                out.append({"error": True, "platform": "opennotebook", "message": "连接 Open Notebook 失败，请检查地址/密码配置与实例状态"})
+        # Memos（beta）：单库同步源
+        if (self.config.get("memos_url") or "").strip():
+            try:
+                sub = await self.manager.ensure_memos_sub()
+                row = sub.to_dict()
+                row["display_name"] = sub.target_kb or sub.kb_name or "Memos"
+                out.append(row)
+            except Exception:  # noqa: BLE001
+                self.logger.exception("查询 Memos 失败")
+                out.append({"error": True, "platform": "memos", "message": "连接 Memos 失败，请检查地址/Token 配置"})
         # GitHub：手动添加的仓库订阅（不做自动补全）
         # 标题显示目标本地 AstrBot 知识库名（repo 名），而非完整仓库路径
         for s in subs:

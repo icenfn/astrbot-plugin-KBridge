@@ -19,6 +19,8 @@ import aiohttp
 
 from .ima_client import IMAClient, IMAError, PERMISSION_CODES, _retry_with_backoff
 from .youdao_client import YoudaoClient, YoudaoError
+from .on_client import OpenNotebookClient, OpenNotebookError
+from .memos_client import MemosClient, MemosError
 from .github_client import (
     GitHubClient,
     GitHubError,
@@ -44,6 +46,8 @@ MAX_ITEM_SAVE = 2000  # 单个同步源单次同步条目上限，防止异常�
 SKIP_CODES = {110020, 210006}
 # 有道云条目索引键前缀（与 IMA media_id 区分，避免跨平台 id 撞车）
 YDAO_KEY_PREFIX = "yd:"
+ON_KEY_PREFIX = "on:"  # Open Notebook 增量索引前缀（source/note id）
+MEMOS_KEY_PREFIX = "ms:"  # Memos 增量索引前缀（memo uid）
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _SCRIPT_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
@@ -130,6 +134,8 @@ class SyncManager:
         self._client: IMAClient | None = None
         self._youdao: YoudaoClient | None = None
         self._github: GitHubClient | None = None
+        self._on: OpenNotebookClient | None = None
+        self._memos: MemosClient | None = None
         self._index_cache: dict[str, dict[str, Any]] | None = None
         self._sem: asyncio.Semaphore | None = None
         self._upload_sem: asyncio.Semaphore | None = None  # 全局入库串行锁（防并发 embedding OOM）
@@ -177,6 +183,8 @@ class SyncManager:
             "youdao": bool(pe.get("youdao", True)),
             "github": bool(pe.get("github", True)),
             "url2kb": bool(pe.get("url2kb", True)),
+            "opennotebook": bool(pe.get("opennotebook", True)),
+            "memos": bool(pe.get("memos", True)),
         }
 
     def _check_platform_enabled(self, platform: str) -> None:
@@ -201,6 +209,21 @@ class SyncManager:
                     or DEFAULT_GITHUB_MIRROR,
                 )
             return self._github
+        if platform == "opennotebook":
+            if self._on is None:
+                self._on = OpenNotebookClient(
+                    (self.config.get("open_notebook_url") or "").strip()
+                    or "http://localhost:5055",
+                    (self.config.get("open_notebook_password") or "").strip(),
+                )
+            return self._on
+        if platform == "memos":
+            if self._memos is None:
+                self._memos = MemosClient(
+                    (self.config.get("memos_url") or "").strip(),
+                    (self.config.get("memos_token") or "").strip(),
+                )
+            return self._memos
         if self._client is None:
             client_id = (self.config.get("ima_client_id") or "").strip()
             api_key = (self.config.get("ima_api_key") or "").strip()
@@ -216,6 +239,10 @@ class SyncManager:
             await self._youdao.close()
         if self._github:
             await self._github.close()
+        if self._on:
+            await self._on.close()
+        if self._memos:
+            await self._memos.close()
 
     async def reset_client(self, platform: str = "") -> None:
         """配置变更后重置客户端，使新 Key 生效。platform 为空则全部重置。"""
@@ -228,6 +255,12 @@ class SyncManager:
         if platform in ("", "github") and self._github:
             await self._github.close()
             self._github = None
+        if platform in ("", "opennotebook") and self._on:
+            await self._on.close()
+            self._on = None
+        if platform in ("", "memos") and self._memos:
+            await self._memos.close()
+            self._memos = None
 
     async def get_subs(self) -> list[Subscription]:
         raw = await self.star.get_kv_data(KV_SUBS, [])
@@ -325,6 +358,55 @@ class SyncManager:
                 self.logger.info(f"[KBridge] 同步源定时开关: {s.kb_name} -> {s.enabled}")
                 return s
         raise ValueError("同步源不存在")
+
+    async def ensure_opennotebook_subs(self) -> list[dict[str, Any]]:
+        """Open Notebook（beta）：自动补全 notebooks 同步源并清理残留，返回列表。"""
+        client = await self.get_client("opennotebook")
+        items = await _retry_with_backoff(lambda: client.list_notebooks())
+        subs = await self.get_subs()
+        existing = {(s.platform, s.kb_id) for s in subs}
+        valid: set[str] = set()
+        changed = False
+        out: list[dict[str, Any]] = []
+        for it in items:
+            nid = str(it.get("id") or "")
+            name = str(it.get("name") or nid)
+            if not nid:
+                continue
+            valid.add(nid)
+            out.append({"id": nid, "name": name})
+            if ("opennotebook", nid) not in existing:
+                subs.append(
+                    Subscription(
+                        kb_id=nid, kb_name=name, target_kb=name, platform="opennotebook"
+                    )
+                )
+                existing.add(("opennotebook", nid))
+                changed = True
+        stale = [s for s in subs if s.platform == "opennotebook" and s.kb_id not in valid]
+        if stale:
+            subs = [s for s in subs if s.platform != "opennotebook" or s.kb_id in valid]
+            changed = True
+        if changed:
+            await self._save_subs(subs)
+        return out
+
+    async def ensure_memos_sub(self) -> Subscription:
+        """Memos（beta）：单库同步源，目标库名与配置（memos_target_kb）保持同步。"""
+        target = (self.config.get("memos_target_kb") or "").strip() or "Memos"
+        subs = await self.get_subs()
+        sub = next((s for s in subs if s.platform == "memos"), None)
+        if sub is None:
+            sub = Subscription(
+                kb_id="memos", kb_name=target, target_kb=target, platform="memos"
+            )
+            subs.append(sub)
+            await self._save_subs(subs)
+        elif sub.target_kb != target:
+            sub.target_kb = target
+            sub.kb_name = target
+            await self._save_subs(subs)
+        return sub
 
     async def add_schedule_log(self, level: str, message: str) -> None:
         """写入定时同步日志（环形，最多 MAX_SCHED_LOGS 条，新在前）。"""
@@ -684,6 +766,10 @@ class SyncManager:
                 await self._sync_github(sub, result)
             elif sub.platform == "url2kb":
                 await self._sync_url2kb(sub, result)
+            elif sub.platform == "opennotebook":
+                await self._sync_opennotebook(sub, result)
+            elif sub.platform == "memos":
+                await self._sync_memos(sub, result)
             else:
                 await self._sync_ima(sub, result)
             sub.synced_count = await self._count_index(sub.kb_id)
@@ -1012,6 +1098,96 @@ class SyncManager:
             if any(isinstance(x, _SyncCancelled) for x in ret):
                 raise _SyncCancelled()
         await self._save_index()
+
+    async def _sync_opennotebook(self, sub: Subscription, result: SyncResult) -> None:
+        """Open Notebook（beta）同步：取 notebook 的 sources/notes 内容入库。
+
+        目标 AstrBot 知识库名 = notebook 名（自动创建）；增量索引 key=on:<id>。
+        """
+        client = await self.get_client("opennotebook")
+        kb, kb_name, recreated = await self.resolve_target_kb(sub)
+        index = await self._get_index()
+        kb_index = index.setdefault(sub.kb_id, {})
+        if recreated:
+            kb_index.clear()  # 知识库刚重建，旧索引失效，全量重同步
+        sources = await _retry_with_backoff(lambda: client.list_sources(sub.kb_id))
+        result.total = len(sources)
+
+        async def process(src: dict[str, Any]) -> None:
+            if self.cancel_requested:
+                raise _SyncCancelled()
+            sid = str(src.get("id") or "")
+            if not sid:
+                result.skipped += 1
+                return
+            key = f"{ON_KEY_PREFIX}{sid}"
+            if key in kb_index:
+                result.skipped += 1
+                return
+            title = str(src.get("name") or src.get("title") or sid)[:120]
+            content = str(src.get("content") or src.get("text") or "").strip()
+            if not content:
+                result.skipped += 1
+                kb_index[key] = {"doc_id": "", "title": title, "skipped": "empty"}
+                return
+            async with self._upload_semaphore():
+                doc = await kb.upload_document(
+                    file_name=f"{title}.md", file_content=content, file_type="md"
+                )
+            kb_index[key] = {"doc_id": doc.doc_id, "title": title}
+            result.synced += 1
+
+        async with self._semaphore():
+            await asyncio.gather(*(process(src) for src in sources))
+
+    async def _sync_memos(self, sub: Subscription, result: SyncResult) -> None:
+        """Memos（beta）同步：分页拉取全部备忘录（Markdown content）入库。
+
+        目标 AstrBot 知识库名 = memos_target_kb（默认 Memos）；增量 key=ms:<uid>。
+        """
+        client = await self.get_client("memos")
+        kb, kb_name, recreated = await self.resolve_target_kb(sub)
+        index = await self._get_index()
+        kb_index = index.setdefault(sub.kb_id, {})
+        if recreated:
+            kb_index.clear()
+        memos: list[dict[str, Any]] = []
+        page_token = ""
+        while True:
+            items, page_token = await _retry_with_backoff(
+                lambda: client.list_memos(100, page_token)
+            )
+            memos.extend(items)
+            if not page_token or len(memos) >= MAX_ITEM_SAVE:
+                break
+        result.total = len(memos)
+
+        async def process(m: dict[str, Any]) -> None:
+            if self.cancel_requested:
+                raise _SyncCancelled()
+            uid = str(m.get("uid") or m.get("id") or "")
+            if not uid:
+                result.skipped += 1
+                return
+            key = f"{MEMOS_KEY_PREFIX}{uid}"
+            if key in kb_index:
+                result.skipped += 1
+                return
+            content = str(m.get("content") or "").strip()
+            if not content:
+                result.skipped += 1
+                kb_index[key] = {"doc_id": "", "title": uid, "skipped": "empty"}
+                return
+            title = content.splitlines()[0][:40] or uid
+            async with self._upload_semaphore():
+                doc = await kb.upload_document(
+                    file_name=f"{title}.md", file_content=content, file_type="md"
+                )
+            kb_index[key] = {"doc_id": doc.doc_id, "title": title}
+            result.synced += 1
+
+        async with self._semaphore():
+            await asyncio.gather(*(process(m) for m in memos))
 
     async def _sync_url2kb(self, sub: Subscription, result: SyncResult) -> None:
         """url2kb 同步：分组内全部 URL 抓取网页 -> Markdown 入库。

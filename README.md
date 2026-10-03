@@ -1,13 +1,13 @@
 # KBridge
 
-> **astrbot 知识库同步插件，装这一个就够了！** 支持从腾讯 ima、有道云笔记、GitHub、Url 等同步，更多支持的平台正在路上…
+> **astrbot 知识库同步插件，装这一个就够了！** 支持从腾讯 ima、有道云笔记、GitHub、Url、Open Notebook、Memos 等同步，更多支持的平台正在路上…
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.16-2563eb)](https://github.com/AstrBotDevs/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-4caf50)](./LICENSE)
 [![Plugin](https://img.shields.io/badge/AstrBot%20Plugin-KBridge-0ea5e9)](https://github.com/icenfn/astrbot-plugin-KBridge)
 
-将你分散在 **ima 知识库**、**有道云笔记**、**GitHub 仓库** 里的内容，按需增量同步进 AstrBot 知识库，让 AstrBot 的 RAG 检索直接可用。自带 WebUI 管理页面，支持定时同步。
+将你分散在 **ima 知识库**、**有道云笔记**、**GitHub 仓库**、**Open Notebook**、**Memos** 里的内容，按需增量同步进 AstrBot 知识库，让 AstrBot 的 RAG 检索直接可用。自带 WebUI 管理页面，支持定时同步。
 
 ## 目录
 
@@ -30,11 +30,13 @@
 - **有道云笔记**：官方 MCP（SSE）协议单库同步，目标 AstrBot 知识库名称可配置（默认 `YoudaoNote`）
 - **GitHub 仓库**：多仓库管理，支持**整个仓库**（默认分支）或 **tree 子目录**（如 `…/tree/master/packages/docs/src/pages/en`）
 - **格式白名单**：仅导入 AstrBot 可解析格式（`md/txt/markdown/rst/adoc/docx/xlsx/xls/pdf/epub`），自动忽略 `node_modules/dist/build` 等目录
-- **增量同步**：ima 按 `media_id`、有道云按笔记 id、GitHub 按文件相对路径去重，重复同步不产生重复文档
+- **增量同步**：ima 按 `media_id`、有道云按笔记 id、GitHub 按文件相对路径、Open Notebook 按 source/note id、Memos 按 memo uid 去重，重复同步不产生重复文档
 - **自动建库 + 重排序**：目标知识库不存在时自动创建，并自动绑定已配置的 Embedding 与 Rerank（重排序）模型
 - **定时同步**：按间隔（天/时/分/秒）自动同步已开启「定时」的同步源，日志高亮分级展示（成功/警告/失败）
 - **平台开关**：每个平台可独立启用/禁用，禁用后同步列表自动标记、手动/定时/全部同步均跳过该平台
 - **url2kb**：网页一键转 Markdown 入库——多个分组（分组名即 AstrBot 知识库名，带备注）、多 URL（自动识别网页标题），同步/定时同步均支持
+- **Open Notebook（beta）**：自托管 RAG 服务（`lfnovo/open-notebook`）接入，页面自动展示 notebooks；同步 notebook 的 sources/notes 内容入库，目标知识库名 = notebook 名
+- **Memos（beta）**：自建 Memos 实例（`usememos/memos`）接入，单库同步源，分页拉取全部备忘录（Markdown）入库，目标知识库名可配置（默认 `Memos`）
 - **WebUI 管理页面**：插件自带 GUI，平台配置、同步管理、定时同步一目了然
 - **命令管理**：`/kbridge` 全命令组
 
@@ -52,6 +54,8 @@
    - **有道云**：显示单库同步源，点击「同步」即可
    - **GitHub**：在「平台配置 → Github」中输入仓库 URL（如 `https://github.com/Chalarangelo/30-seconds-of-code`），回到同步页点击「同步」
    - **url2kb**：在「平台配置 → url2kb」中添加分组（名称即知识库名）与网页 URL（自动识别标题），回到同步页点击「同步」即抓取转 Markdown 入库
+   - **Open Notebook（beta）**：在「平台配置 → Open Notebook（beta）」填写 API 地址与密码（未启用 `OPEN_NOTEBOOK_PASSWORD` 可留空），回到同步页即可看到 notebooks 列表，点击「同步」即把 sources/notes 内容入库
+   - **Memos（beta）**：在「平台配置 → Memos（beta）」填写实例地址与 API Token（Memos 设置 → 我的账户 → 访问令牌），回到同步页点击「同步」即把全部备忘录入库
 3. 在「定时同步」页设置间隔并启用，即可自动同步已开启「定时」的同步源
 
 ## 平台配置
@@ -64,6 +68,11 @@
 | GitHub | `github_token`（必填） | [https://github.com/settings/tokens](https://github.com/settings/tokens) 生成（勾选 `repo` 权限）；未配置时无法添加仓库 |
 | GitHub | `github_raw_mirror`（可选） | Raw 加速镜像前缀（默认 `https://gh.dpik.top/`），raw 文件下载走镜像；留空使用官方源。AstrBot「设置→网络→GitHub 加速地址」仅作用于插件市场下载，插件内需在此单独配置 |
 | url2kb | 无凭据 | 网页转 Markdown：分组（名 = AstrBot 知识库名）+ 备注 + URL 列表（自动识别标题），抓取正文转纯文本 Markdown 入库 |
+| Open Notebook | `open_notebook_url` | 自托管 Open Notebook API 地址（默认 `http://localhost:5055`） |
+| Open Notebook | `open_notebook_password` | API 密码（未启用 `OPEN_NOTEBOOK_PASSWORD` 可留空） |
+| Memos | `memos_url` | 自建 Memos 实例地址（如 `https://memos.example.com`） |
+| Memos | `memos_token`（必填） | Memos 设置 → 我的账户 → 访问令牌 |
+| Memos | `memos_target_kb` | 同步至 AstrBot 知识库名称（默认 `Memos`） |
 
 ## WebUI 管理页面
 
@@ -71,7 +80,7 @@
 
 - **总览**：平台配置数（x/n）、同步源数、已同步文档数
 - **平台配置**：全屏弹窗填写各平台凭据；GitHub 平台配置内嵌仓库 URL 管理（添加/删除）；每个平台卡片带启用/禁用开关
-- **同步管理**：ima 自建库自动展示、有道云单库、GitHub 仓库卡片；每张卡片可开关「定时」同步（与同步按钮同一行）；同步中显示进度并可一键取消（已入库部分保留）；目标 AstrBot 知识库被删除时显示「未同步」
+- **同步管理**：ima 自建库自动展示、有道云单库、GitHub 仓库卡片、Open Notebook notebooks 自动展示、Memos 单库；每张卡片可开关「定时」同步（与同步按钮同一行）；同步中显示进度并可一键取消（已入库部分保留）；目标 AstrBot 知识库被删除时显示「未同步」
 - **定时同步**：设置间隔（天/时/分/秒）并启用，自动同步已开启「定时」的同步源；页面展示高亮日志（成功/警告/失败）
 - **同步进度**：后台执行 + 自动轮询刷新，同步按钮实时显示 x/y 进度
 

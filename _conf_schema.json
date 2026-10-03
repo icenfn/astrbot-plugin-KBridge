@@ -39,5 +39,35 @@
     "description": "同步下载并发数（建议 1-5，受 IMA 接口频控限制）",
     "type": "int",
     "default": 3
+  },
+  "open_notebook_url": {
+    "description": "Open Notebook API 地址（自托管 RAG 服务，默认 http://localhost:5055）",
+    "type": "string",
+    "default": "http://localhost:5055",
+    "secret": false
+  },
+  "open_notebook_password": {
+    "description": "Open Notebook API 密码（若未启用 OPEN_NOTEBOOK_PASSWORD 可留空）",
+    "type": "string",
+    "default": "",
+    "secret": true
+  },
+  "memos_url": {
+    "description": "Memos 实例地址（自建 usememos，如 https://memos.example.com）",
+    "type": "string",
+    "default": "",
+    "secret": false
+  },
+  "memos_token": {
+    "description": "Memos API Token（Memos 设置 → 我的账户 → 访问令牌）",
+    "type": "string",
+    "default": "",
+    "secret": true
+  },
+  "memos_target_kb": {
+    "description": "Memos 同步至 AstrBot 知识库的名称（默认 Memos，自动创建）",
+    "type": "string",
+    "default": "Memos",
+    "secret": false
   }
 }
