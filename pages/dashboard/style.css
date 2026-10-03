@@ -477,6 +477,7 @@ svg { width: 18px; height: 18px; flex: none; }
   .sub-main { width: 100%; max-width: 100%; }
   .sub-ops { width: 100%; }
   .sub-ops .btn { flex: 1; justify-content: center; min-width: 0; }
+  .sub-ops .btn.sub-dellocal { flex: 0 1 auto; }
   .sched-bar #sched-save { flex: 1; justify-content: center; }
   .add-row .btn { flex: 1; justify-content: center; }
   #toast-wrap { left: 18px; right: 18px; }
@@ -592,6 +593,7 @@ svg { width: 18px; height: 18px; flex: none; }
 .sub-line2 .dim { color: var(--dim); }
 .sub-ops { display: flex; align-items: center; gap: 8px; flex: none; flex-wrap: wrap; row-gap: 6px; justify-content: flex-end; }
 .switch > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 92px; }
+.sub-dellocal { flex: 0 1 auto; }
 .empty-state {
   text-align: center;
   color: var(--dim);
@@ -775,6 +777,7 @@ svg { width: 18px; height: 18px; flex: none; }
   .sub-main { width: 100%; max-width: 100%; }
   .sub-ops { width: 100%; }
   .sub-ops .btn { flex: 1; justify-content: center; min-width: 0; }
+  .sub-ops .btn.sub-dellocal { flex: 0 1 auto; }
   .sched-bar #sched-save { flex: 1; justify-content: center; }
   .add-row .btn { flex: 1; justify-content: center; }
   #toast-wrap { left: 18px; right: 18px; }

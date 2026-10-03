@@ -174,6 +174,7 @@ class KBridge(Star):
             (f"/{PLUGIN_NAME}/subs/add", self.api_subs_add, ["POST"], "添加 GitHub 仓库"),
             (f"/{PLUGIN_NAME}/subs/remove", self.api_subs_remove, ["POST"], "删除同步源"),
             (f"/{PLUGIN_NAME}/subs/toggle", self.api_subs_toggle, ["POST"], "定时同步开关"),
+            (f"/{PLUGIN_NAME}/subs/delete-local", self.api_subs_delete_local, ["POST"], "删除本地知识库"),
             (f"/{PLUGIN_NAME}/sync", self.api_sync, ["POST"], "触发同步"),
             (f"/{PLUGIN_NAME}/sync/cancel", self.api_cancel, ["POST"], "取消同步"),
             (f"/{PLUGIN_NAME}/schedule", self.api_schedule_get, ["GET"], "读取定时同步"),
@@ -510,6 +511,30 @@ class KBridge(Star):
         except ValueError as e:
             return error_response(str(e), status_code=400)
         return json_response({"removed": True, "name": sub.kb_name, "platform": sub.platform})
+
+    @webapi_handler
+    async def api_subs_delete_local(self):
+        payload = await request.json(default={})
+        kb_id = str(payload.get("kb_id") or "").strip()
+        platform = str(payload.get("platform") or "ima").strip() or "ima"
+        if not kb_id:
+            return error_response("缺少 kb_id", status_code=400)
+        sub = next(
+            (
+                s
+                for s in await self.manager.get_subs()
+                if s.kb_id == kb_id and s.platform == platform
+            ),
+            None,
+        )
+        if sub is None:
+            return error_response("同步源不存在", status_code=404)
+        try:
+            r = await self.manager.delete_local(sub)
+            return json_response({"name": r["name"], "deleted": r["deleted"]})
+        except Exception as e:
+            self.logger.error(f"[KBridge] 删除本地失败 {kb_id}: {e}")
+            return error_response(str(e), status_code=500)
 
     @webapi_handler
     async def api_subs_toggle(self):

@@ -542,16 +542,7 @@ class SyncManager:
         recreated=True 表示本次新建（原知识库被删除），旧增量索引全部失效。
         """
         kb_mgr = self.context.kb_manager
-        if sub.platform == "youdao":
-            name = (
-                sub.target_kb
-                or (self.config.get("youdao_target_kb") or "").strip()
-                or "YoudaoNote"
-            )
-        elif sub.platform == "github":
-            name = sub.target_kb or self._github_repo_name(sub.kb_id)
-        else:
-            name = sub.target_kb or sub.kb_name
+        name = self._target_kb_name(sub)
         kb = await kb_mgr.get_kb_by_name(name)
         if kb:
             return kb, name, False
@@ -572,6 +563,46 @@ class SyncManager:
                 f"[KBridge] 知识库 {name} 已重建并绑定重排序模型: {rerank_provider_id}"
             )
         return kb, name, True
+
+    def _target_kb_name(self, sub: Subscription) -> str:
+        """该同步源的目标 AstrBot 知识库名（与 resolve_target_kb 一致）。"""
+        if sub.platform == "youdao":
+            return (
+                sub.target_kb
+                or (self.config.get("youdao_target_kb") or "").strip()
+                or "YoudaoNote"
+            )
+        if sub.platform == "github":
+            return sub.target_kb or self._github_repo_name(sub.kb_id)
+        return sub.target_kb or sub.kb_name
+
+    async def delete_local(self, sub: Subscription) -> dict:
+        """删除该同步源已同步到 AstrBot 的本地知识库数据（订阅与源保留）。
+
+        删除目标知识库（幂等：不存在则跳过），并清空该同步源的增量索引，
+        列表「已同步 N」随之归零，下次同步全量重建。
+        """
+        name = self._target_kb_name(sub)
+        kb_mgr = self.context.kb_manager
+        deleted = False
+        kb = await kb_mgr.get_kb_by_name(name)
+        if kb is not None:
+            del_kb = getattr(kb_mgr, "delete_kb", None)
+            if del_kb is None:
+                raise ValueError("当前 AstrBot 版本不支持删除知识库（KBManager.delete_kb）")
+            await del_kb(name)
+            deleted = True
+        index = await self._get_index()
+        if sub.kb_id in index:
+            del index[sub.kb_id]
+            await self._save_index()
+        # 同步源列表状态归零（已同步数/时间/状态）
+        sub.synced_count = 0
+        sub.last_sync_at = ""
+        sub.last_status = ""
+        sub.last_error = ""
+        await self._flush_sub(sub)
+        return {"name": name, "deleted": deleted}
 
     @staticmethod
     def _github_repo_name(kb_id: str) -> str:

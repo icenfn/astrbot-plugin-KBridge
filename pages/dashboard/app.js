@@ -205,12 +205,10 @@ function renderPlatforms() {
   root.querySelectorAll(".platform-card").forEach((card) => {
     card.addEventListener("click", (e) => {
       if (e.target.closest(".p-toggle")) return; // 开关区域不触发配置弹窗
-      try {
-        openPlatformConfig(card.dataset.platform);
-      } catch (err) {
+      openPlatformConfig(card.dataset.platform).catch((err) => {
         console.error("[KBridge] 打开平台配置失败:", err);
         toast(`打开配置失败：${err.message}`, "error");
-      }
+      });
     });
   });
   root.querySelectorAll("[data-pen]").forEach((cb) => {
@@ -248,6 +246,17 @@ async function openPlatformConfig(id) {
           <button class="btn primary" data-action="add-gh">${ICONS.plus}添加仓库</button>
         </div>
         <p class="add-hint dim">支持整个仓库或 tree 子目录；仅导入 AstrBot 可解析格式（md/txt/pdf/docx/xlsx/epub 等）</p>
+      </div>` : "";
+  const u2Block = id === "url2kb"
+    ? `<div class="gh-section">
+        <div class="gh-head">知识库分组<span class="dim"> · 0</span></div>
+        <div class="u2k-list"><div class="empty-state small">加载中…</div></div>
+        <div class="add-row">
+          <input class="input grow" id="u2k-name" placeholder="分组名称（即 AstrBot 知识库名）" />
+          <input class="input" id="u2k-note" placeholder="备注（可选）" />
+          <button class="btn primary" data-action="add-u2k">${ICONS.plus}添加分组</button>
+        </div>
+        <p class="add-hint dim">分组名即 AstrBot 知识库名；添加 URL 自动识别网页标题</p>
       </div>` : "";
   await showFullPage({
     title: `${p.name} · 平台配置`,
@@ -500,6 +509,7 @@ function subCard(s) {
           <span>定时同步</span>
         </label>
         ${syncBtn}
+        <button class="btn small danger sub-dellocal" data-del="${esc(s.kb_id)}" data-platform="${esc(s.platform)}" title="删除已同步到 AstrBot 的本地知识库（订阅保留）">${ICONS.trash}删除本地</button>
       </div>
     </div>`;
 }
@@ -551,6 +561,17 @@ function renderSubs() {
       try {
         const r = await bridge.apiPost("sync/cancel", { kb_id: b.dataset.cancel });
         toast(r.cancelled ? "正在取消同步…（已同步部分保留）" : r.message || "同步已结束", r.cancelled ? "warn" : "ok");
+        await refresh();
+      } catch (e) {
+        toast(e.message, "error");
+      }
+    };
+  });
+  root.querySelectorAll("[data-del]").forEach((b) => {
+    b.onclick = async () => {
+      try {
+        const r = await bridge.apiPost("subs/delete-local", { kb_id: b.dataset.del, platform: b.dataset.platform || "ima" });
+        toast(`已删除本地知识库：${r.name}`, "success");
         await refresh();
       } catch (e) {
         toast(e.message, "error");
