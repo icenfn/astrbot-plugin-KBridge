@@ -77,7 +77,7 @@ class KBridge(Star):
     CONFIG_WRITABLE = {
         "ima_client_id": "str",
         "ima_api_key": "str",
-        "auto_create_kb": "bool",
+        "youdao_api_key": "str",
         "max_concurrency": "int",
     }
 
@@ -109,17 +109,23 @@ class KBridge(Star):
                             {"key": "ima_api_key", "label": "API Key", "secret": True},
                         ],
                     },
+                    "youdao": {
+                        "name": "有道云笔记",
+                        "supported": True,
+                        "fields": [
+                            {"key": "youdao_api_key", "label": "API Key", "secret": True},
+                        ],
+                    },
                     "github": {"name": "GitHub Repository", "supported": False},
                     "notebook": {"name": "Open Notebook", "supported": False},
                     "url2kb": {"name": "url2kb", "supported": False},
-                    "evernote": {"name": "印象笔记", "supported": False},
                 },
                 "values": {
                     "ima_client_id": bool(self.config.get("ima_client_id")),
                     "ima_api_key": bool(self.config.get("ima_api_key")),
+                    "youdao_api_key": bool(self.config.get("youdao_api_key")),
                 },
                 "common": {
-                    "auto_create_kb": bool(self.config.get("auto_create_kb", True)),
                     "max_concurrency": int(self.config.get("max_concurrency", 3) or 3),
                 },
             }
@@ -147,24 +153,30 @@ class KBridge(Star):
                     return error_response(f"{key} 必须是数字", status_code=400)
             saved.append(key)
         self.config.save_config()
-        # 凭据变更后重置 IMA 客户端
-        if "ima_client_id" in saved or "ima_api_key" in saved:
-            await self.manager.reset_client()
+        # 凭据变更后重置对应平台客户端，使新 Key 生效
+        for platform, keys in (
+            ("ima", ("ima_client_id", "ima_api_key")),
+            ("youdao", ("youdao_api_key",)),
+        ):
+            if any(k in saved for k in keys):
+                await self.manager.reset_client(platform)
         self.logger.info(f"[KBridge] 页面保存平台配置成功: {saved}")
         return json_response({"saved": saved})
 
     @webapi_handler
     async def api_stats(self):
         subs = await self.manager.get_subs()
+        configured = {
+            "ima": bool(self.config.get("ima_client_id") and self.config.get("ima_api_key")),
+            "youdao": bool(self.config.get("youdao_api_key")),
+        }
         return json_response(
             {
                 "sub_count": len(subs),
                 "total_synced": sum(s.synced_count for s in subs),
                 "is_syncing": self.manager.is_syncing,
-                "ima_configured": bool(
-                    self.config.get("ima_client_id") and self.config.get("ima_api_key")
-                ),
-                "auto_create_kb": bool(self.config.get("auto_create_kb", True)),
+                "configured": configured,
+                "ima_configured": configured["ima"],  # 兼容旧前端
             }
         )
 
@@ -179,14 +191,15 @@ class KBridge(Star):
         kb_id = str(payload.get("kb_id") or "").strip()
         if not kb_id:
             return error_response("缺少 kb_id", status_code=400)
+        platform = str(payload.get("platform") or "ima")
         target_kb = str(payload.get("target_kb") or "").strip()
         # 前端从知识库列表选择时直接携带名称，无需再搜索
         kb_name = str(payload.get("kb_name") or "").strip()
         if kb_name:
             matched = {"id": kb_id, "name": kb_name}
-        else:
+        elif platform == "ima":
             # 兼容手动输入 id/名称：先搜索匹配
-            client = await self.manager.get_client()
+            client = await self.manager.get_client("ima")
             try:
                 items = await _retry_with_backoff(lambda: client.search_knowledge_bases(kb_id))
             except IMAError as e:
@@ -199,8 +212,10 @@ class KBridge(Star):
                 matched = items[0]
             if matched is None:
                 return error_response(f"未找到知识库: {kb_id}", status_code=404)
+        else:
+            return error_response(f"未找到知识库: {kb_id}", status_code=404)
         # 重复拉取：返回已存在而非报错（前端提示"已在同步列表中"）
-        existing = await self.manager.get_sub_by_kb_id(matched["id"])
+        existing = await self.manager.get_sub_by_kb_id(matched["id"], platform)
         if existing is not None:
             return json_response(
                 {"added": False, "exists": True, "sub": existing.to_dict()}
@@ -209,7 +224,7 @@ class KBridge(Star):
             kb_id=matched["id"],
             kb_name=matched.get("name", matched["id"]),
             target_kb=target_kb,
-            platform=str(payload.get("platform") or "ima"),
+            platform=platform,
         )
         return json_response({"added": True, "exists": False, "sub": sub.to_dict()})
 
@@ -252,7 +267,10 @@ class KBridge(Star):
 
     @webapi_handler
     async def api_kbs(self):
-        client = await self.manager.get_client()
+        platform = str(request.query.get("platform") or "ima")
+        if platform == "youdao":
+            return await self._api_youdao_kbs()
+        client = await self.manager.get_client("ima")
         items = await _retry_with_backoff(lambda: client.search_knowledge_bases())
         # 只展示自建知识库：订阅/共享库（base_type="我加入的订阅知识库"）的
         # 文件无法通过 OpenAPI 读取（220030），拉取必然失败，避免误导
@@ -261,6 +279,27 @@ class KBridge(Star):
         for it in items:
             it.setdefault("platform", "ima")
         self.logger.info(f"[KBridge] 查询 IMA 自建知识库列表: {len(items)} 个")
+        return json_response(items)
+
+    async def _api_youdao_kbs(self):
+        """有道云笔记本列表：根目录 + 一级文件夹（目录即同步单元）。"""
+        client = await self.manager.get_client("youdao")
+        items = [{"id": "0", "name": "全部笔记（根目录）", "platform": "youdao"}]
+        try:
+            entries, _ = await _retry_with_backoff(lambda: client.list_items("0"))
+            for e in entries:
+                if e.get("dir"):
+                    items.append(
+                        {
+                            "id": e.get("id"),
+                            "name": e.get("name"),
+                            "platform": "youdao",
+                        }
+                    )
+        except Exception:  # noqa: BLE001
+            self.logger.exception("查询有道云目录失败")
+            raise
+        self.logger.info(f"[KBridge] 查询有道云目录: {len(items)} 个（含根目录）")
         return json_response(items)
 
     async def _bg_sync(self, index: int | None) -> None:

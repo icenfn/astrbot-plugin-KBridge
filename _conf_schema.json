@@ -11,10 +11,11 @@
     "default": "",
     "secret": true
   },
-  "auto_create_kb": {
-    "description": "目标 AstrBot 知识库不存在时自动创建（名称与 IMA 知识库一致）",
-    "type": "bool",
-    "default": true
+  "youdao_api_key": {
+    "description": "有道云笔记 API Key（在 https://mopen.163.com 获取，需云笔记账号绑定手机号）",
+    "type": "string",
+    "default": "",
+    "secret": true
   },
   "max_concurrency": {
     "description": "同步下载并发数（建议 1-5，受 IMA 接口频控限制）",

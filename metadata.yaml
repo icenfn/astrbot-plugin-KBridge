@@ -1,6 +1,6 @@
 name: astrbot_plugin_kbridge
 display_name: KBridge
-desc: 同步外部知识源（ima 知识库等）到 AstrBot 知识库，支持增量同步与 WebUI 管理。
+desc: 同步外部知识源（ima 知识库、有道云笔记）到 AstrBot 知识库，支持增量同步与 WebUI 管理。
 short_desc: 外部知识源订阅同步到 AstrBot 知识库
 author: icenfn
 version: v0.1.0

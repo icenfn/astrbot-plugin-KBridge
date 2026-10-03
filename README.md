@@ -1,10 +1,11 @@
 # KBridge — AstrBot 外部知识源同步插件
 
-同步外部知识源（当前支持 **腾讯 ima 知识库**）到 AstrBot 知识库，支持增量同步与同步源管理。
+同步外部知识源（当前支持 **腾讯 ima 知识库**、**有道云笔记**）到 AstrBot 知识库，支持增量同步与同步源管理。
 
 ## 功能
 
 - **ima 知识库同步**：将 ima 账号下自建的知识库同步到 AstrBot
+- **有道云笔记同步**：将有道云笔记目录（根目录/文件夹）下的笔记同步为 Markdown 入库
 - **增量同步**：仅同步新增内容（按 ima `media_id` 去重），重复同步不产生重复文档
 - **自动建库**：目标 AstrBot 知识库不存在时自动创建（需已配置嵌入模型）
 - **内容落地**：网页/公众号文章转为 Markdown；PDF/DOCX/XLSX/MD/TXT/EPUB 原样入库
@@ -16,13 +17,13 @@
 1. 在 AstrBot 插件市场/插件目录安装本插件
 2. 在插件配置面板填写：
    - `ima_client_id` / `ima_api_key`：在 [https://ima.qq.com/agent-interface](https://ima.qq.com/agent-interface) 登录后生成
-   - `auto_create_kb`：自动创建目标知识库（需已配置 Embedding 模型）
+   - `youdao_api_key`：有道云笔记 API Key（在 [https://mopen.163.com](https://mopen.163.com) 获取，需账号绑定手机号）
 
 ## WebUI 管理页面
 
 插件自带管理页面（AstrBot Plugin Pages）：在 WebUI 插件详情页打开 **KBridge 管理**（`pages/dashboard`）。支持：
 
-- 平台配置：页面内填写各平台凭据（当前 ima 的 Client ID / API Key），多平台架构预留 GitHub Repository / Open Notebook / url2kb
+- 平台配置：页面内填写各平台凭据（ima Client ID / API Key、有道云 API Key），多平台架构预留 GitHub Repository / Open Notebook / url2kb
 - 状态总览：平台配置、同步源数、已同步文档数
 - 拉取同步源：下拉选择 IMA 自建知识库，目标 AstrBot 知识库自动创建（名称与 IMA 知识库一致）
 - 同步源管理：单个同步 / 删除，状态与错误信息展示
@@ -45,6 +46,7 @@
 2. 对每个新条目：`get_media_info` 获取原文访问链接 → 下载内容 → 按类型落地（网页转 Markdown / 文件原样）→ `upload_document` 写入 AstrBot 知识库
 3. 跳过：订阅库/共享笔记无权限（220030/210005/210011/210034）、无访问链接、AstrBot 不支持解析的格式（如 PPTX）
 4. 笔记读取：ima 笔记（media_type=11）经官方 notes 接口 `get_doc_content` 读取纯文本入库（需笔记作者身份）
+5. 有道云：经官方 MCP（SSE + `X-API-Key` 认证）递归列出目录下笔记，`getNoteTextContent` 读取内容统一存为 Markdown
 
 ## 限制（v0.1）
 
@@ -56,10 +58,10 @@
 ## TODO：待支持的知识库平台
 
 - [x] **ima** — 已支持（同步 + 管理页面）
+- [x] **有道云笔记** — 已支持（目录/笔记同步，基于官方 MCP）
 - [ ] **GitHub Repository** — 仓库文件（含 README/文档目录）同步
 - [ ] **Open Notebook** — NotebookLM 开放笔记本导入
 - [ ] **url2kb** — URL 批量转知识库（网页链接直接入库）
-- [ ] **印象笔记 (Evernote)** — 笔记本/笔记内容同步
 
 ## 开发
 

@@ -138,7 +138,15 @@ async function loadConfig() {
 
 async function loadKbs(force = false) {
   if (!kbsCache.length || force) {
-    kbsCache = await bridge.apiGet("kbs");
+    const platforms = Object.entries(platformConfig?.platforms || {})
+      .filter(([, p]) => p.supported)
+      .map(([id]) => id);
+    const res = await Promise.all(
+      platforms.map((id) =>
+        bridge.apiGet(`kbs?platform=${id}`).catch(() => [])
+      )
+    );
+    kbsCache = res.flat();
   }
   return kbsCache;
 }
@@ -157,10 +165,9 @@ function renderOverview() {
   Object.entries(platformConfig?.platforms || {}).forEach(([id, p]) => {
     if (!p.supported) return;
     supported += 1;
-    const isSet =
-      id === "ima" &&
-      platformConfig.values["ima_client_id"] &&
-      platformConfig.values["ima_api_key"];
+    const isSet = (p.fields || []).every(
+      (f) => platformConfig.values[f.key]
+    );
     if (isSet) configured += 1;
   });
   const platOk = supported > 0 && configured === supported;
@@ -190,7 +197,8 @@ function renderOverview() {
       <button class="btn" data-action="goto-platforms">${ICONS.link}去配置平台</button>
       <button class="btn" data-action="goto-subs">${ICONS.book}管理同步</button>
     </div>
-    ${!stats.ima_configured ? `<div class="notice warn">IMA 未配置：请到「平台配置」填写 Client ID / API Key</div>` : ""}`;
+    ${stats.configured && !Object.values(stats.configured).some(Boolean)
+      ? `<div class="notice warn">尚无平台配置：请到「平台配置」填写凭据</div>` : ""}`;
   bindQuickActions();
 }
 
@@ -215,7 +223,7 @@ function renderPlatforms() {
     <div class="platform-grid">
       ${Object.entries(platforms).map(([id, p]) => {
         const set = p.supported
-          ? platformConfig.values["ima_client_id"] && platformConfig.values["ima_api_key"]
+          ? (p.fields || []).every((f) => platformConfig.values[f.key])
           : false;
         return `
         <div class="platform-card ${p.supported ? "" : "soon"}" data-platform="${id}">
@@ -243,37 +251,25 @@ async function openPlatformConfig(id) {
     toast(`${p.name} 即将支持`, "warn");
     return;
   }
-  const cidSet = platformConfig.values["ima_client_id"];
-  const keySet = platformConfig.values["ima_api_key"];
   await showFullPage({
     title: `${p.name} · 平台配置`,
     contentHtml: `
-      <div class="pfield">
-        <label>Client ID</label>
-        <input class="input" id="pf-cid" type="text" autocomplete="off"
-          placeholder="${cidSet ? "已配置（留空保持不变）" : "输入 Client ID"}" />
-      </div>
-      <div class="pfield">
-        <label>API Key</label>
-        <input class="input" id="pf-key" type="text" autocomplete="off"
-          placeholder="${keySet ? "已配置（留空保持不变）" : "输入 API Key"}" />
-      </div>
-      <div class="pfield">
-        <label>自动创建目标知识库</label>
-        <label class="switch">
-          <input id="pf-auto-kb" type="checkbox" ${stats?.auto_create_kb ? "checked" : ""} />
-          <span class="slider"></span>
-        </label>
-      </div>
+      ${(p.fields || []).map((f) => `
+        <div class="pfield">
+          <label>${f.label}</label>
+          <input class="input" data-key="${f.key}" type="${f.secret ? "password" : "text"}"
+            autocomplete="off"
+            placeholder="${platformConfig.values[f.key] ? "已配置（留空保持不变）" : `输入 ${f.label}`}" />
+        </div>`).join("")}
+      <p class="add-hint dim">目标 AstrBot 知识库自动创建（名称与源一致），无需额外配置</p>
       <button class="btn primary" id="pf-save">保存配置</button>`,
     onMount: (body, close) => {
       body.querySelector("#pf-save").onclick = async () => {
         const fields = {};
-        const cid = body.querySelector("#pf-cid").value.trim();
-        const key = body.querySelector("#pf-key").value.trim();
-        if (cid) fields.ima_client_id = cid;
-        if (key) fields.ima_api_key = key;
-        fields.auto_create_kb = body.querySelector("#pf-auto-kb").checked;
+        body.querySelectorAll(".input[data-key]").forEach((inp) => {
+          const v = inp.value.trim();
+          if (v) fields[inp.dataset.key] = v;
+        });
         if (!Object.keys(fields).length) {
           toast("没有需要保存的内容", "warn");
           return;
@@ -312,7 +308,7 @@ function renderSubs() {
   });
   let sel = "";
   groups.forEach((items, g) => {
-    const label = g === "ima" ? "腾讯 ima" : g;
+    const label = platformConfig?.platforms?.[g]?.name || g;
     sel += `<optgroup label="${label}">${items
       .map((k) => `<option value="${k.id}" data-name="${kbName(k)}" data-platform="${g}">${kbName(k)}</option>`)
       .join("")}</optgroup>`;
@@ -328,7 +324,7 @@ function renderSubs() {
   let subListHtml = "";
   if (subs.length) {
     subGroups.forEach((items, g) => {
-      const label = g === "ima" ? "腾讯 ima" : g;
+      const label = platformConfig?.platforms?.[g]?.name || g;
       subListHtml += `
         <div class="sub-group">
           <div class="sub-group-title">${label}<span class="dim"> · ${items.length}</span></div>
@@ -336,7 +332,7 @@ function renderSubs() {
         </div>`;
     });
   } else {
-    subListHtml = `<div class="empty-state">暂无同步 · 从上方选择 IMA 知识库拉取</div>`;
+    subListHtml = `<div class="empty-state">暂无同步 · 从上方选择知识库拉取</div>`;
   }
   root.innerHTML = `
     <div class="add-panel">
@@ -346,7 +342,7 @@ function renderSubs() {
         </select>
         <button class="btn primary" data-action="add-sub">${ICONS.plus}拉取</button>
       </div>
-      <p class="add-hint dim">拉取后自动创建 AstrBot 知识库（名称与 IMA 知识库一致），无需手动指定目标库名</p>
+      <p class="add-hint dim">拉取后自动创建 AstrBot 知识库（名称与源一致），无需手动指定目标库名</p>
     </div>
     ${subListHtml}`;
 
@@ -355,7 +351,7 @@ function renderSubs() {
     const kbSel = $("sub-kb");
     const kbId = kbSel.value;
     if (!kbId) {
-      toast("请先选择 IMA 知识库", "warn");
+      toast("请先选择知识库", "warn");
       return;
     }
     const opt = kbSel.selectedOptions[0];

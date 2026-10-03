@@ -1,8 +1,9 @@
-"""同步源管理与同步核心：IMA 知识库 -> AstrBot 知识库。
+"""同步源管理与同步核心：外部知识源（IMA / 有道云笔记）-> AstrBot 知识库。
 
 持久化走插件 KV 存储（AstrBot 官方推荐，随 AstrBot 数据库持久化）：
 - kbridge_subs:   同步源列表
-- kbridge_index:  每个同步源已同步的 media_id -> AstrBot doc_id（增量去重）
+- kbridge_index:  每个同步源已同步条目 id -> AstrBot doc_id（增量去重；
+                  有道云条目 id 以 yd: 前缀区分，IMA 保持无前缀兼容存量）
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from typing import Any
 import aiohttp
 
 from .ima_client import IMAClient, IMAError, PERMISSION_CODES, _retry_with_backoff
+from .youdao_client import YoudaoClient, YoudaoError
 
 logger = logging.getLogger("astrbot")
 
@@ -30,6 +32,8 @@ TEXT_MEDIA_TYPES = {2, 6}  # 网页 / 微信公众号文章
 MAX_ITEM_SAVE = 2000  # 单个同步源单次同步条目上限，防止异常膨胀
 # 静默跳过类错误（不计失败）：110020 安全打击/内容违规；210006 笔记已删除
 SKIP_CODES = {110020, 210006}
+# 有道云条目索引键前缀（与 IMA media_id 区分，避免跨平台 id 撞车）
+YDAO_KEY_PREFIX = "yd:"
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _SCRIPT_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
@@ -76,6 +80,7 @@ class SyncResult:
     skipped: int = 0
     failed: int = 0
     errors: list[str] = field(default_factory=list)
+    skip_counts: dict[str, int] = field(default_factory=dict)
 
 
 def _sanitize_filename(name: str) -> str:
@@ -116,6 +121,7 @@ class SyncManager:
         self.config = config
         self.logger = getattr(star, "logger", logger)
         self._client: IMAClient | None = None
+        self._youdao: YoudaoClient | None = None
         self._index_cache: dict[str, dict[str, Any]] | None = None
         self._sem: asyncio.Semaphore | None = None
         self._sync_lock = asyncio.Lock()
@@ -127,7 +133,16 @@ class SyncManager:
 
     # ---------- 基础 ----------
 
-    async def get_client(self) -> IMAClient:
+    async def get_client(self, platform: str = "ima"):
+        """按平台返回客户端实例（懒加载，凭据缺失时抛错）。"""
+        platform = platform or "ima"
+        if platform == "youdao":
+            if self._youdao is None:
+                api_key = (self.config.get("youdao_api_key") or "").strip()
+                if not api_key:
+                    raise YoudaoError(0, "未配置有道云笔记 API Key（插件页面「平台配置」中填写）")
+                self._youdao = YoudaoClient(api_key)
+            return self._youdao
         if self._client is None:
             client_id = (self.config.get("ima_client_id") or "").strip()
             api_key = (self.config.get("ima_api_key") or "").strip()
@@ -139,12 +154,17 @@ class SyncManager:
     async def close(self) -> None:
         if self._client:
             await self._client.close()
+        if self._youdao:
+            await self._youdao.close()
 
-    async def reset_client(self) -> None:
-        """配置变更后重置 IMA 客户端，使新 Key 生效。"""
-        if self._client:
+    async def reset_client(self, platform: str = "") -> None:
+        """配置变更后重置客户端，使新 Key 生效。platform 为空则全部重置。"""
+        if platform in ("", "ima") and self._client:
             await self._client.close()
-        self._client = None
+            self._client = None
+        if platform in ("", "youdao") and self._youdao:
+            await self._youdao.close()
+            self._youdao = None
 
     async def get_subs(self) -> list[Subscription]:
         raw = await self.star.get_kv_data(KV_SUBS, [])
@@ -168,17 +188,21 @@ class SyncManager:
 
     # ---------- 同步源管理 ----------
 
-    async def get_sub_by_kb_id(self, kb_id: str) -> Subscription | None:
-        """按 IMA 知识库 ID 查找已存在的同步源。"""
+    async def get_sub_by_kb_id(self, kb_id: str, platform: str = "ima") -> Subscription | None:
+        """按平台 + 知识库 ID 查找已存在的同步源。"""
         subs = await self.get_subs()
-        return next((s for s in subs if s.kb_id == kb_id), None)
+        return next(
+            (s for s in subs if s.kb_id == kb_id and s.platform == (platform or "ima")),
+            None,
+        )
 
     async def add_subscription(
         self, kb_id: str, kb_name: str = "", target_kb: str = "", platform: str = "ima"
     ) -> Subscription:
+        platform = platform or "ima"
         subs = await self.get_subs()
-        if any(s.kb_id == kb_id for s in subs):
-            raise ValueError(f"知识库 {kb_id} 已在同步源列表中")
+        if any(s.kb_id == kb_id and s.platform == platform for s in subs):
+            raise ValueError(f"知识库 {kb_id} 已在 {platform} 同步源列表中")
         sub = Subscription(kb_id=kb_id, kb_name=kb_name, target_kb=target_kb, platform=platform)
         subs.append(sub)
         await self._save_subs(subs)
@@ -204,8 +228,7 @@ class SyncManager:
         kb = await kb_mgr.get_kb_by_name(name)
         if kb:
             return kb, name
-        if not self.config.get("auto_create_kb", True):
-            raise ValueError(f"目标知识库 {name} 不存在，且未开启自动创建")
+        # 始终自动创建目标知识库（无 auto_create_kb 开关）
         embedding_provider_id = await self._pick_embedding_provider_id()
         await kb_mgr.create_kb(
             name, embedding_provider_id=embedding_provider_id, emoji="📥"
@@ -261,85 +284,29 @@ class SyncManager:
 
     async def sync_subscription(self, sub: Subscription) -> SyncResult:
         result = SyncResult(kb_id=sub.kb_id)
-        self.logger.info(f"[KBridge] 开始同步: {sub.kb_name} ({sub.kb_id})")
+        self.logger.info(f"[KBridge] 开始同步: {sub.kb_name} ({sub.kb_id}) [{sub.platform}]")
         try:
-            client = await self.get_client()
-            kb, kb_name = await self.resolve_target_kb(sub)
-            index = await self._get_index()
-            kb_index = index.setdefault(sub.kb_id, {})
-
-            # 1. 拉取根目录全部条目（翻页）
-            items: list[dict[str, Any]] = []
-            cursor = ""
-            while True:
-                batch, is_end, next_cursor = await _retry_with_backoff(
-                    lambda: client.list_kb_items(sub.kb_id, cursor=cursor)
-                )
-                items.extend(batch)
-                if is_end or not next_cursor or len(items) >= MAX_ITEM_SAVE:
-                    break
-                cursor = next_cursor
-            result.total = len(items)
-
-            # 2. 逐个条目增量同步（并发受限）
-            sem = self._semaphore()
-            perm_warned = False  # 权限类错误只提示一次
-            skip_counts: dict[str, int] = {}  # 跳过原因统计
-
-            async def process(item: dict[str, Any]) -> None:
-                nonlocal perm_warned
-                media_id = str(item.get("media_id") or "")
-                if not media_id or media_id in kb_index:
-                    result.skipped += 1
-                    return
-                try:
-                    async with sem:
-                        status = await self._process_item(kb, kb_name, sub, media_id, item, kb_index)
-                    if status == "ok":
-                        result.synced += 1
-                    else:
-                        result.skipped += 1
-                        skip_counts[status] = skip_counts.get(status, 0) + 1
-                except IMAError as e:
-                    if e.code in SKIP_CODES:
-                        result.skipped += 1  # 安全打击/内容违规/笔记已删除，跳过
-                    elif e.code in PERMISSION_CODES:
-                        # 订阅库文件/共享笔记无权限（需 ima 客户端授权），记一次说明后跳过
-                        result.skipped += 1
-                        if not perm_warned:
-                            perm_warned = True
-                            result.errors.append(
-                                f"IMA 无权限读取（code={e.code}）："
-                                "请在 ima 客户端授权，或改用你自己创建的知识库"
-                            )
-                    else:
-                        result.failed += 1
-                        result.errors.append(f"{item.get('title', media_id)}: {e.msg}")
-                except Exception as e:  # noqa: BLE001
-                    self.logger.exception(f"同步条目失败 {media_id}")
-                    result.failed += 1
-                    result.errors.append(f"{item.get('title', media_id)}: {e}")
-
-            await asyncio.gather(*(process(it) for it in items))
-
-            await self._save_index()
+            if sub.platform == "youdao":
+                await self._sync_youdao(sub, result)
+            else:
+                await self._sync_ima(sub, result)
             sub.synced_count += result.synced
             sub.last_sync_at = time.strftime("%Y-%m-%d %H:%M:%S")
-            # 仅真实失败（failed>0）视为 partial；跳过（笔记/无链接/无权限等）不算失败
+            # 仅真实失败（failed>0）视为 partial；跳过（笔记/无权限/空内容等）不算失败
             if result.failed > 0:
                 sub.last_status = "partial"
             else:
                 sub.last_status = "ok"
             sub.last_error = "; ".join(result.errors[:5])
-            if skip_counts and not sub.last_error:
+            if result.skip_counts and not sub.last_error:
                 sub.last_error = "跳过原因: " + ", ".join(
-                    f"{k}×{v}" for k, v in sorted(skip_counts.items())
+                    f"{k}×{v}" for k, v in sorted(result.skip_counts.items())
                 )
             await self._flush_sub(sub)
             skip_detail = ""
-            if skip_counts:
+            if result.skip_counts:
                 skip_detail = " | 跳过原因: " + ", ".join(
-                    f"{k}×{v}" for k, v in sorted(skip_counts.items())
+                    f"{k}×{v}" for k, v in sorted(result.skip_counts.items())
                 )
             self.logger.info(
                 f"[KBridge] 同步完成 {sub.kb_name}: 共 {result.total} 条, "
@@ -353,6 +320,153 @@ class SyncManager:
             sub.last_error = str(e)
             await self._flush_sub(sub)
             raise
+
+    async def _sync_ima(self, sub: Subscription, result: SyncResult) -> None:
+        """IMA 同步：翻页拉取根目录 -> 逐个条目增量处理。"""
+        client = await self.get_client("ima")
+        kb, kb_name = await self.resolve_target_kb(sub)
+        index = await self._get_index()
+        kb_index = index.setdefault(sub.kb_id, {})
+
+        # 1. 拉取根目录全部条目（翻页）
+        items: list[dict[str, Any]] = []
+        cursor = ""
+        while True:
+            batch, is_end, next_cursor = await _retry_with_backoff(
+                lambda: client.list_kb_items(sub.kb_id, cursor=cursor)
+            )
+            items.extend(batch)
+            if is_end or not next_cursor or len(items) >= MAX_ITEM_SAVE:
+                break
+            cursor = next_cursor
+        result.total = len(items)
+
+        # 2. 逐个条目增量同步（并发受限）
+        sem = self._semaphore()
+        perm_warned = False  # 权限类错误只提示一次
+
+        async def process(item: dict[str, Any]) -> None:
+            nonlocal perm_warned
+            media_id = str(item.get("media_id") or "")
+            if not media_id or media_id in kb_index:
+                result.skipped += 1
+                return
+            try:
+                async with sem:
+                    status = await self._process_ima_item(
+                        kb, kb_name, sub, media_id, item, kb_index
+                    )
+                if status == "ok":
+                    result.synced += 1
+                else:
+                    result.skipped += 1
+                    result.skip_counts[status] = result.skip_counts.get(status, 0) + 1
+            except IMAError as e:
+                if e.code in SKIP_CODES:
+                    result.skipped += 1  # 安全打击/内容违规/笔记已删除，跳过
+                elif e.code in PERMISSION_CODES:
+                    # 订阅库文件/共享笔记无权限（需 ima 客户端授权），记一次说明后跳过
+                    result.skipped += 1
+                    if not perm_warned:
+                        perm_warned = True
+                        result.errors.append(
+                            f"IMA 无权限读取（code={e.code}）："
+                            "请在 ima 客户端授权，或改用你自己创建的知识库"
+                        )
+                else:
+                    result.failed += 1
+                    result.errors.append(f"{item.get('title', media_id)}: {e.msg}")
+            except Exception as e:  # noqa: BLE001
+                self.logger.exception(f"同步条目失败 {media_id}")
+                result.failed += 1
+                result.errors.append(f"{item.get('title', media_id)}: {e}")
+
+        await asyncio.gather(*(process(it) for it in items))
+        await self._save_index()
+
+    async def _sync_youdao(self, sub: Subscription, result: SyncResult) -> None:
+        """有道云同步：递归列出文件夹下全部笔记 -> 读取文本内容入库。
+
+        订阅源 kb_id 为有道云目录 ID（"0" = 根目录，或 listNotes 返回的
+        dir=true 条目 id）。笔记内容统一转为 Markdown 写入 AstrBot 知识库。
+        """
+        client = await self.get_client("youdao")
+        kb, kb_name = await self.resolve_target_kb(sub)
+        index = await self._get_index()
+        kb_index = index.setdefault(sub.kb_id, {})
+
+        # 1. 递归收集全部笔记（防循环引用）
+        notes: list[dict[str, Any]] = []
+
+        async def walk(folder_id: str, depth: int = 0) -> None:
+            if depth > 8 or len(notes) >= MAX_ITEM_SAVE:
+                return
+            last_id = ""
+            while True:
+                entries, has_more = await _retry_with_backoff(
+                    lambda: client.list_items(folder_id, last_id=last_id)
+                )
+                for e in entries:
+                    if len(notes) >= MAX_ITEM_SAVE:
+                        break
+                    if e.get("dir"):
+                        await walk(str(e.get("id") or ""), depth + 1)
+                    else:
+                        notes.append(e)
+                if not has_more or not entries:
+                    break
+                last_id = str(entries[-1].get("id") or "")
+        await walk(sub.kb_id or "0")
+        result.total = len(notes)
+
+        # 2. 逐个笔记读取并入库（MCP 会话单连接，串行调用）
+        async def process(note: dict[str, Any]) -> None:
+            file_id = str(note.get("id") or "")
+            if not file_id:
+                result.skipped += 1
+                return
+            key = f"{YDAO_KEY_PREFIX}{file_id}"
+            if key in kb_index:
+                result.skipped += 1
+                return
+            title = str(note.get("name") or file_id)
+            try:
+                data = await client.get_note_content(file_id)
+                content = str(data.get("content") or "").strip()
+                if not content:
+                    kb_index[key] = {"doc_id": "", "title": title, "skipped": "empty"}
+                    result.skipped += 1
+                    result.skip_counts["empty"] = result.skip_counts.get("empty", 0) + 1
+                    return
+                # 去扩展名（name 形如 "xxx.note"），统一存 .md
+                stem = re.sub(r"\.[a-zA-Z0-9]+$", "", title).strip() or "untitled"
+                doc = await kb.upload_document(
+                    file_name=f"{_sanitize_filename(stem)}.md",
+                    file_content=content.encode("utf-8"),
+                    file_type="md",
+                )
+                kb_index[key] = {
+                    "doc_id": doc.doc_id,
+                    "title": title,
+                    "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                result.synced += 1
+            except YoudaoError as e:
+                # 笔记删除/权限类错误跳过，其余计失败
+                if e.code in (404, 403, 401):
+                    result.skipped += 1
+                    result.skip_counts["denied"] = result.skip_counts.get("denied", 0) + 1
+                else:
+                    result.failed += 1
+                    result.errors.append(f"{title}: {e.msg}")
+            except Exception as e:  # noqa: BLE001
+                self.logger.exception(f"有道云同步条目失败 {file_id}")
+                result.failed += 1
+                result.errors.append(f"{title}: {e}")
+
+        for note in notes:
+            await process(note)
+        await self._save_index()
 
     async def sync_all(self) -> list[SyncResult]:
         """同步全部同步源（防重入：已有同步在跑时直接返回空结果）。"""
@@ -376,7 +490,7 @@ class SyncManager:
             finally:
                 self._syncing = False
 
-    async def _process_item(
+    async def _process_ima_item(
         self, kb, kb_name: str, sub: Subscription, media_id: str, item: dict, kb_index: dict
     ) -> str:
         """处理单条媒体。返回状态：ok（已入库）/ 跳过原因字符串。
