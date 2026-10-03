@@ -140,6 +140,7 @@ class SyncManager:
         self._github: GitHubClient | None = None
         self._index_cache: dict[str, dict[str, Any]] | None = None
         self._sem: asyncio.Semaphore | None = None
+        self._upload_sem: asyncio.Semaphore | None = None  # 全局入库串行锁（防并发 embedding OOM）
         self._sync_lock = asyncio.Lock()
         self._syncing = False
         self._cancel = False
@@ -173,6 +174,21 @@ class SyncManager:
         }
 
     # ---------- 基础 ----------
+
+    def platform_enabled(self) -> dict:
+        """读取平台启用/禁用状态（默认全部启用）。"""
+        pe = self.config.get("platform_enabled") or {}
+        if not isinstance(pe, dict):
+            return {"ima": True, "youdao": True, "github": True}
+        return {
+            "ima": bool(pe.get("ima", True)),
+            "youdao": bool(pe.get("youdao", True)),
+            "github": bool(pe.get("github", True)),
+        }
+
+    def _check_platform_enabled(self, platform: str) -> None:
+        if not self.platform_enabled().get(platform or "ima", True):
+            raise ValueError(f"平台 {platform} 已禁用，请先在「平台配置」中启用")
 
     async def get_client(self, platform: str = "ima"):
         """按平台返回客户端实例（懒加载，凭据缺失时抛错）。"""
@@ -244,6 +260,17 @@ class SyncManager:
         if self._sem is None:
             self._sem = asyncio.Semaphore(max(1, int(self.config.get("max_concurrency", 3))))
         return self._sem
+
+    def _upload_semaphore(self) -> asyncio.Semaphore:
+        """全局入库串行锁：所有同步源的 upload_document 统一串行。
+
+        upload_document 会做切片 + embedding 向量化，若多个同步源/多个条目
+        并发入库，本地 embedding 模型或 API 请求会瞬间打爆内存/显存（OOM）。
+        下载仍可并发，仅入库严格串行。
+        """
+        if self._upload_sem is None:
+            self._upload_sem = asyncio.Semaphore(1)
+        return self._upload_sem
 
     # ---------- 同步源管理 ----------
 
@@ -487,6 +514,7 @@ class SyncManager:
 
     async def sync_subscription(self, sub: Subscription) -> SyncResult:
         result = SyncResult(kb_id=sub.kb_id)
+        self._check_platform_enabled(sub.platform)  # 平台已禁用时直接拒绝同步
         self._current = sub
         self._current_result = result
         self.logger.info(f"[KBridge] 开始同步: {sub.kb_name} ({sub.kb_id}) [{sub.platform}]")
@@ -695,17 +723,22 @@ class SyncManager:
                     return
                 # 去扩展名（name 形如 "xxx.note"），统一存 .md
                 stem = re.sub(r"\.[a-zA-Z0-9]+$", "", title).strip() or "untitled"
-                doc = await kb.upload_document(
-                    file_name=f"{_sanitize_filename(stem)}.md",
-                    file_content=content.encode("utf-8"),
-                    file_type="md",
-                )
+                async with self._upload_semaphore():  # 全局串行入库，防 OOM
+                    if self.cancel_requested:
+                        raise _SyncCancelled()
+                    doc = await kb.upload_document(
+                        file_name=f"{_sanitize_filename(stem)}.md",
+                        file_content=content.encode("utf-8"),
+                        file_type="md",
+                    )
                 kb_index[key] = {
                     "doc_id": doc.doc_id,
                     "title": title,
                     "at": time.strftime("%Y-%m-%d %H:%M:%S"),
                 }
                 result.synced += 1
+            except _SyncCancelled:
+                raise
             except YoudaoError as e:
                 # 笔记删除/权限类错误跳过，其余计失败
                 if e.code in (404, 403, 401):
@@ -782,11 +815,14 @@ class SyncManager:
                     result.skip_counts["empty"] = result.skip_counts.get("empty", 0) + 1
                     return
                 file_name = f"{_sanitize_filename(relpath)}.{ext}"
-                doc = await kb.upload_document(
-                    file_name=file_name,
-                    file_content=data,
-                    file_type=ext,
-                )
+                async with self._upload_semaphore():  # 全局串行入库，防 OOM
+                    if self.cancel_requested:
+                        raise _SyncCancelled()
+                    doc = await kb.upload_document(
+                        file_name=file_name,
+                        file_content=data,
+                        file_type=ext,
+                    )
                 kb_index[relpath] = {
                     "doc_id": doc.doc_id,
                     "title": relpath,
@@ -805,9 +841,15 @@ class SyncManager:
                 result.failed += 1
                 result.errors.append(f"{relpath}: {e}")
 
-        ret = await asyncio.gather(*(process(f) for f in files), return_exceptions=True)
-        if any(isinstance(x, _SyncCancelled) for x in ret):
-            raise _SyncCancelled()
+        # 分块并发（每批 GH_BATCH），避免一次性挂起上千个 task 挤占内存
+        GH_BATCH = 60
+        for i in range(0, len(files), GH_BATCH):
+            if self.cancel_requested:
+                raise _SyncCancelled()
+            batch = files[i : i + GH_BATCH]
+            ret = await asyncio.gather(*(process(f) for f in batch), return_exceptions=True)
+            if any(isinstance(x, _SyncCancelled) for x in ret):
+                raise _SyncCancelled()
         await self._save_index()
 
     async def sync_all(self) -> list[SyncResult]:
@@ -862,11 +904,14 @@ class SyncManager:
                 kb_index[media_id] = {"doc_id": "", "title": title, "skipped": "empty"}
                 return "empty"
             file_name = f"{_sanitize_filename(title)}.md"
-            doc = await kb.upload_document(
-                file_name=file_name,
-                file_content=content.encode("utf-8"),
-                file_type="md",
-            )
+            async with self._upload_semaphore():  # 全局串行入库，防 OOM
+                if self.cancel_requested:
+                    raise _SyncCancelled()
+                doc = await kb.upload_document(
+                    file_name=file_name,
+                    file_content=content.encode("utf-8"),
+                    file_type="md",
+                )
             kb_index[media_id] = {
                 "doc_id": doc.doc_id,
                 "title": title,
@@ -902,11 +947,14 @@ class SyncManager:
         else:
             payload = content
 
-        doc = await kb.upload_document(
-            file_name=file_name,
-            file_content=payload,
-            file_type=ext,
-        )
+        async with self._upload_semaphore():  # 全局串行入库，防 OOM
+            if self.cancel_requested:
+                raise _SyncCancelled()
+            doc = await kb.upload_document(
+                file_name=file_name,
+                file_content=payload,
+                file_type=ext,
+            )
         kb_index[media_id] = {
             "doc_id": doc.doc_id,
             "title": title,

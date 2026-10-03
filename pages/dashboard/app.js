@@ -118,7 +118,7 @@ function renderOverview() {
   let supported = 0;
   let configured = 0;
   Object.entries(platformConfig?.platforms || {}).forEach(([id, p]) => {
-    if (!p.supported) return;
+    if (!p.supported || p.enabled === false) return;
     supported += 1;
     const isSet = (p.fields || []).every((f) => platformConfig.values[f.key]);
     if (isSet) configured += 1;
@@ -173,22 +173,40 @@ function renderPlatforms() {
         const set = p.supported
           ? (p.fields || []).every((f) => platformConfig.values[f.key])
           : false;
+        const off = p.enabled === false;
         return `
-        <div class="platform-card ${p.supported ? "" : "soon"}" data-platform="${id}">
+        <div class="platform-card ${p.supported ? "" : "soon"} ${off ? "off" : ""}" data-platform="${id}">
           <div class="platform-head">
             <div class="platform-ic ${set ? "good" : ""}">${ICONS.link}</div>
-            <span class="badge ${p.supported ? (set ? "ok" : "warn") : "soon"}">
-              ${p.supported ? (set ? "已配置" : "未配置") : "即将支持"}
-            </span>
+            <label class="p-toggle" title="启用/禁用平台">
+              <input type="checkbox" data-pen="${id}" ${off ? "" : "checked"} ${p.supported ? "" : "disabled"} />
+              <span>${off ? "已禁用" : "已启用"}</span>
+            </label>
           </div>
           <div class="platform-name">${p.name}</div>
-          <div class="platform-desc">${p.supported ? "点击进入配置" : "开发中，敬请期待"}</div>
+          <div class="platform-desc">${p.supported ? (off ? "已禁用，点击可查看/修改配置" : "点击进入配置") : "开发中，敬请期待"}</div>
           ${p.supported ? '<div class="open-hint">进入配置 ›</div>' : ""}
         </div>`;
       }).join("")}
     </div>`;
   root.querySelectorAll(".platform-card").forEach((card) => {
     card.onclick = () => openPlatformConfig(card.dataset.platform);
+  });
+  root.querySelectorAll("[data-pen]").forEach((cb) => {
+    // 开关点击不触发卡片进入配置
+    cb.addEventListener("click", (e) => e.stopPropagation());
+    cb.onchange = async () => {
+      const id = cb.dataset.pen;
+      try {
+        await bridge.apiPost("config", { platform_enabled: { [id]: cb.checked } });
+        await loadConfig();
+        await Promise.all([renderPlatforms(), refresh()]);
+        toast(`平台「${platforms[id]?.name || id}」已${cb.checked ? "启用" : "禁用"}`, "success");
+      } catch (e) {
+        toast(e.message, "error");
+        cb.checked = !cb.checked;
+      }
+    };
   });
 }
 
@@ -309,6 +327,7 @@ async function openPlatformConfig(id) {
 }
 
 function subCard(s) {
+  const off = platformConfig?.platforms?.[s.platform]?.enabled === false;
   const cur = stats?.current;
   const syncingThis = cur && cur.kb_id === s.kb_id;
   const otherSyncing = (stats?.is_syncing && !syncingThis) || false;
@@ -329,13 +348,15 @@ function subCard(s) {
     `已同步 ${s.synced_count}`,
     s.last_sync_at ? `上次 ${s.last_sync_at.slice(5, 19)}` : "",
   ].filter(Boolean);
-  const syncBtn = syncingThis
-    ? `<button class="btn small danger" data-cancel="${esc(s.kb_id)}">${ICONS.bolt}取消 ${cur.total ? `${cur.synced}/${cur.total}` : ""}</button>`
-    : otherSyncing
-      ? `<button class="btn small" disabled>${ICONS.sync}同步中…</button>`
-      : `<button class="btn small" data-kb="${esc(s.kb_id)}" data-platform="${esc(s.platform)}">${ICONS.sync}同步</button>`;
+  const syncBtn = off
+    ? `<button class="btn small" disabled>${ICONS.sync}平台已禁用</button>`
+    : syncingThis
+      ? `<button class="btn small danger" data-cancel="${esc(s.kb_id)}">${ICONS.bolt}取消 ${cur.total ? `${cur.synced}/${cur.total}` : ""}</button>`
+      : otherSyncing
+        ? `<button class="btn small" disabled>${ICONS.sync}同步中…</button>`
+        : `<button class="btn small" data-kb="${esc(s.kb_id)}" data-platform="${esc(s.platform)}">${ICONS.sync}同步</button>`;
   return `
-    <div class="sub-card">
+    <div class="sub-card ${off ? "off" : ""}">
       <div class="sub-main">
         <div class="sub-line1">
           <span class="sub-name" title="${esc(name)}">${esc(name)}</span>
@@ -347,7 +368,7 @@ function subCard(s) {
       </div>
       <div class="sub-ops">
         <label class="sub-toggle" title="定时同步开关">
-          <input type="checkbox" data-tgl="${esc(s.kb_id)}" data-platform="${esc(s.platform)}" ${s.enabled ? "checked" : ""} />
+          <input type="checkbox" data-tgl="${esc(s.kb_id)}" data-platform="${esc(s.platform)}" ${s.enabled ? "checked" : ""} ${off ? "disabled" : ""} />
           <span>定时</span>
         </label>
         ${syncBtn}
@@ -380,12 +401,13 @@ function renderSubs() {
   if (!groups.has("github")) groups.set("github", []);
   groups.forEach((subs, g) => {
     const label = platformConfig?.platforms?.[g]?.name || g;
+    const off = platformConfig?.platforms?.[g]?.enabled === false;
     const subListHtml = subs.length
       ? subs.map((s) => subCard(s)).join("")
       : `<div class="empty-state small">暂无已添加仓库</div>`;
     html += `
       <div class="sub-group">
-        <div class="sub-group-title">${label}<span class="dim"> · ${subs.length}</span></div>
+        <div class="sub-group-title">${label}<span class="dim"> · ${subs.length}</span>${off ? '<span class="badge warn">已禁用</span>' : ""}</div>
         <div class="sub-list">${subListHtml}</div>
       </div>`;
   });

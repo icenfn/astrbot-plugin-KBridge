@@ -188,12 +188,14 @@ class KBridge(Star):
     @webapi_handler
     async def api_config_get(self):
         """返回平台配置状态（secret 字段不回显原文，只回是否已配置）。"""
+        enabled = self.manager.platform_enabled()
         return json_response(
             {
                 "platforms": {
                     "ima": {
                         "name": "腾讯 ima",
                         "supported": True,
+                        "enabled": enabled.get("ima", True),
                         "fields": [
                             {"key": "ima_client_id", "label": "Client ID", "secret": False},
                             {"key": "ima_api_key", "label": "API Key", "secret": True},
@@ -202,6 +204,7 @@ class KBridge(Star):
                     "youdao": {
                         "name": "有道云笔记",
                         "supported": True,
+                        "enabled": enabled.get("youdao", True),
                         "fields": [
                             {"key": "youdao_api_key", "label": "API Key", "secret": True},
                             {
@@ -214,6 +217,7 @@ class KBridge(Star):
                     "github": {
                         "name": "Github",
                         "supported": True,
+                        "enabled": enabled.get("github", True),
                         "fields": [
                             {
                                 "key": "github_token",
@@ -265,6 +269,15 @@ class KBridge(Star):
                 except (TypeError, ValueError):
                     return error_response(f"{key} 必须是数字", status_code=400)
             saved.append(key)
+        # 平台启用/禁用开关
+        pe = payload.get("platform_enabled")
+        if isinstance(pe, dict):
+            cur = self.manager.platform_enabled()
+            for p, v in pe.items():
+                if p in ("ima", "youdao", "github"):
+                    cur[p] = bool(v)
+            self.config["platform_enabled"] = cur
+            saved.append("platform_enabled")
         self.config.save_config()
         # 凭据变更后重置对应平台客户端，使新 Key 生效
         for platform, keys in (
@@ -282,10 +295,12 @@ class KBridge(Star):
     @webapi_handler
     async def api_stats(self):
         subs = await self.manager.get_subs()
+        enabled = self.manager.platform_enabled()
         configured = {
-            "ima": bool(self.config.get("ima_client_id") and self.config.get("ima_api_key")),
-            "youdao": bool(self.config.get("youdao_api_key")),
-            "github": bool(self.config.get("github_token")),
+            "ima": bool(self.config.get("ima_client_id") and self.config.get("ima_api_key"))
+            and enabled.get("ima", True),
+            "youdao": bool(self.config.get("youdao_api_key")) and enabled.get("youdao", True),
+            "github": bool(self.config.get("github_token")) and enabled.get("github", True),
         }
         return json_response(
             {
@@ -473,6 +488,8 @@ class KBridge(Star):
             sub = await self.manager.get_sub_by_kb_id(kb_id, platform)
             if sub is None:
                 return error_response("同步源不存在", status_code=404)
+            if not self.manager.platform_enabled().get(sub.platform, True):
+                return error_response(f"平台 {sub.platform} 已禁用，请先在「平台配置」中启用", status_code=400)
             asyncio.get_running_loop().create_task(self._bg_sync_sub(sub))
         else:
             asyncio.get_running_loop().create_task(self._bg_sync(None))
