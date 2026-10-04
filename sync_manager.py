@@ -547,6 +547,25 @@ class SyncManager:
             return True, title
         return False, ""
 
+    async def url2kb_update_url(self, gid: str, uid: str, title: str, url: str) -> bool:
+        """编辑 URL 的标题与地址。"""
+        groups = await self.get_url2kb_groups()
+        url = (url or "").strip()
+        if not url:
+            return False
+        for g in groups:
+            if str(g.get("id")) != gid:
+                continue
+            for u in g.get("urls") or []:
+                if str(u.get("id")) != uid:
+                    continue
+                u["title"] = (title or "").strip()
+                u["url"] = url
+                await self.save_url2kb_groups(groups)
+                return True
+            return False
+        return False
+
     async def url2kb_remove_url(self, gid: str, uid: str) -> bool:
         groups = await self.get_url2kb_groups()
         for g in groups:

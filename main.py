@@ -382,6 +382,16 @@ class KBridge(Star):
             if not ok:
                 return error_response("分组不存在", status_code=404)
             return json_response({"ok": True, "title": title})
+        if action == "update":
+            uid = str(payload.get("url_id") or "").strip()
+            ok = await self.manager.url2kb_update_url(
+                gid, uid,
+                str(payload.get("title") or ""),
+                str(payload.get("url") or ""),
+            )
+            if not ok:
+                return error_response("URL 不存在或 URL 为空", status_code=404)
+            return json_response({"ok": True})
         if action == "remove":
             uid = str(payload.get("url_id") or "").strip()
             ok = await self.manager.url2kb_remove_url(gid, uid)

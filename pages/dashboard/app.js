@@ -26,6 +26,8 @@ const ICONS = {
   book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14z"/><path d="M20 17v4H6.5A2.5 2.5 0 0 1 4 18.5"/></svg>',
   bolt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z"/></svg>',
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
+  folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>',
+  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h8l4 4v16H6V2z"/><path d="M14 2v4h4"/></svg>',
 };
 
 function confirmDialog({ title, message, okText = "确认删除", danger = true }) {
@@ -217,7 +219,7 @@ function renderPlatforms() {
           <div class="platform-head">
             <div class="platform-ic ${set ? "good" : ""}">${ICONS.link}</div>
             <label class="p-toggle" title="启用/禁用平台">
-              <input type="checkbox" data-pen="${id}" ${swOn ? "checked" : ""} ${p.supported ? "" : "disabled"} />
+              <input type="checkbox" data-pen="${id}" ${swOn ? "checked" : ""} ${p.supported && (set || noFields) ? "" : "disabled"} title="${!set && !noFields ? "未配置，无法启用" : ""}" />
               <span>${off ? "已禁用" : (swOn ? "已启用" : "未启用")}</span>
             </label>
           </div>
@@ -277,11 +279,11 @@ async function openPlatformConfig(id) {
   const u2Block = id === "url2kb"
     ? `<div class="u2k-wrap">
         <div class="u2k-add">
-          <div class="u2k-add-title">添加分组<span class="dim"> · 分组名即 AstrBot 知识库名</span></div>
+          <div class="u2k-add-title">新建文件夹<span class="dim"> · 文件夹名即 AstrBot 知识库名</span></div>
           <div class="add-row">
-            <input class="input grow" id="u2k-name" placeholder="分组名称" />
+            <input class="input grow" id="u2k-name" placeholder="文件夹名称" />
             <input class="input grow" id="u2k-note" placeholder="备注（可选）" />
-            <button class="btn primary" data-action="add-u2k">${ICONS.plus}添加分组</button>
+            <button class="btn primary" data-action="add-u2k">${ICONS.plus}新建</button>
           </div>
         </div>
         <div class="u2k-groups"><div class="empty-state small">加载中…</div></div>
@@ -364,28 +366,51 @@ async function openPlatformConfig(id) {
       body.querySelector("#gh-url")?.addEventListener("keydown", (e) => { if (e.key === "Enter") addGh(); });
       if (ghList) renderGhList();
 
-      // ---- url2kb：分组管理（分组名 = AstrBot 知识库名） ----
+      // ---- url2kb：文件/文件夹视图（文件夹 = 分组，名即 AstrBot 知识库名） ----
       if (id === "url2kb") {
         const u2Root = body.querySelector(".u2k-groups");
         const h = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-        const groupHtml = (g) => `
-          <div class="u2k-group">
-            <div class="u2k-head">
-              <input class="input u2k-name-i" data-gname="${h(g.id)}" value="${h(g.name)}" placeholder="分组名称" />
-              <input class="input u2k-note-i" data-gnote="${h(g.id)}" value="${h(g.note || "")}" placeholder="备注（可选）" />
-              <button class="btn small" data-save-g="${h(g.id)}">保存</button>
-              <button class="btn small danger" data-rmg="${h(g.id)}" title="删除分组">${ICONS.trash}</button>
+        const openFolds = new Set(); // 展开的文件夹 id（默认第一个展开）
+        const fileHtml = (g, u) => `
+          <div class="u2k-file">
+            <span class="u2k-fic2">${ICONS.file}</span>
+            <div class="u2k-fmeta">
+              <span class="u2k-title" title="${h(u.title || u.url)}">${h(u.title || u.url)}</span>
+              <span class="dim u2k-url2" title="${h(u.url)}">${h(u.url)}</span>
             </div>
-            <div class="u2k-urls">
-              ${(g.urls || []).length ? (g.urls || []).map((u) => `
-                <div class="u2k-url">
-                  <span class="u2k-title" title="${h(u.title || u.url)}">${h(u.title || u.url)}</span>
-                  <span class="dim u2k-url2" title="${h(u.url)}">${h(u.url)}</span>
-                  <button class="btn small danger u2k-rm" data-rmu="${h(g.id)}" data-uid="${h(u.id)}" title="删除 URL">${ICONS.trash}</button>
-                </div>`).join("") : `<div class="empty-state small">暂无 URL</div>`}
+            <button class="btn small" data-edit-u="${h(g.id)}" data-uid="${h(u.id)}" title="编辑">编辑</button>
+            <button class="btn small danger u2k-rm" data-rmu="${h(g.id)}" data-uid="${h(u.id)}" title="删除文件">${ICONS.trash}</button>
+          </div>
+          <div class="u2k-file-edit hidden">
+            <input class="input" data-utitle="${h(g.id)}" data-uid="${h(u.id)}" value="${h(u.title || "")}" placeholder="标题" />
+            <input class="input" data-uurl="${h(g.id)}" data-uid="${h(u.id)}" value="${h(u.url)}" placeholder="URL" />
+            <button class="btn" data-save-u="${h(g.id)}" data-uid="${h(u.id)}">${ICONS.check}保存</button>
+            <button class="btn" data-cancel-u="${h(g.id)}" data-uid="${h(u.id)}">取消</button>
+          </div>`;
+        const groupHtml = (g, open) => `
+          <div class="u2k-folder ${open ? "open" : ""}" data-fold="${h(g.id)}">
+            <div class="u2k-folder-head" data-tgl="${h(g.id)}">
+              <span class="u2k-arrow">${open ? "▾" : "▸"}</span>
+              <span class="u2k-fic">${ICONS.folder}</span>
+              <span class="u2k-fname" title="${h(g.name)}">${h(g.name)}</span>
+              ${g.note ? `<span class="dim u2k-fnote" title="${h(g.note)}">${h(g.note)}</span>` : ""}
+              <span class="dim u2k-fcount">${(g.urls || []).length}</span>
+              <span class="u2k-fops">
+                <button class="btn small" data-edit-g="${h(g.id)}" title="编辑文件夹">编辑</button>
+                <button class="btn small danger" data-rmg="${h(g.id)}" title="删除文件夹">${ICONS.trash}</button>
+              </span>
+            </div>
+            <div class="u2k-edit-row hidden">
+              <input class="input" data-gname="${h(g.id)}" value="${h(g.name)}" placeholder="文件夹名称" />
+              <input class="input" data-gnote="${h(g.id)}" value="${h(g.note || "")}" placeholder="备注（可选）" />
+              <button class="btn" data-save-g="${h(g.id)}">${ICONS.check}保存</button>
+              <button class="btn" data-cancel-g="${h(g.id)}">取消</button>
+            </div>
+            <div class="u2k-files">
+              ${(g.urls || []).length ? (g.urls || []).map((u) => fileHtml(g, u)).join("") : `<div class="empty-state small">暂无文件</div>`}
               <div class="add-row">
                 <input class="input grow" id="u2k-url-${h(g.id)}" placeholder="https:// 输入网页地址" />
-                <button class="btn" data-add-u="${h(g.id)}">${ICONS.plus}添加 URL</button>
+                <button class="btn" data-add-u="${h(g.id)}">${ICONS.plus}添加文件</button>
               </div>
             </div>
           </div>`;
@@ -393,25 +418,59 @@ async function openPlatformConfig(id) {
           try {
             const r = await bridge.apiGet("url2kb");
             const groups = r.groups || [];
+            if (!openFolds.size && groups.length) openFolds.add(groups[0].id);
             u2Root.innerHTML = groups.length
-              ? groups.map(groupHtml).join("")
-              : `<div class="empty-state small">暂无分组 · 先添加一个分组</div>`;
+              ? groups.map((g) => groupHtml(g, openFolds.has(g.id))).join("")
+              : `<div class="empty-state small">暂无文件夹 · 先新建一个</div>`;
+            u2Root.querySelectorAll("[data-tgl]").forEach((b) => {
+              b.addEventListener("click", (e) => {
+                if (e.target.closest(".u2k-fops")) return; // 操作按钮不触发展开
+                const gid = b.dataset.tgl;
+                if (openFolds.has(gid)) openFolds.delete(gid);
+                else openFolds.add(gid);
+                const fold = u2Root.querySelector(`[data-fold="${gid}"]`);
+                if (fold) fold.classList.toggle("open");
+                const arrow = b.querySelector(".u2k-arrow");
+                if (arrow) arrow.textContent = openFolds.has(gid) ? "▾" : "▸";
+              });
+            });
+            u2Root.querySelectorAll("[data-edit-g]").forEach((b) =>
+              b.addEventListener("click", () => showRow(u2Root, `[data-gname="${b.dataset.editG}"]`)));
+            u2Root.querySelectorAll("[data-cancel-g]").forEach((b) =>
+              b.addEventListener("click", () => hideRow(u2Root, `[data-gname="${b.dataset.cancelG}"]`)));
             u2Root.querySelectorAll("[data-rmg]").forEach((b) =>
               b.addEventListener("click", () => removeGroup(b.dataset.rmg)));
             u2Root.querySelectorAll("[data-save-g]").forEach((b) =>
               b.addEventListener("click", () => saveGroup(b.dataset.saveG)));
+            u2Root.querySelectorAll("[data-edit-u]").forEach((b) =>
+              b.addEventListener("click", () => showRow(u2Root, `[data-utitle="${b.dataset.editU}"][data-uid="${b.dataset.uid}"]`)));
+            u2Root.querySelectorAll("[data-cancel-u]").forEach((b) =>
+              b.addEventListener("click", () => hideRow(u2Root, `[data-utitle="${b.dataset.cancelU}"][data-uid="${b.dataset.uid}"]`)));
             u2Root.querySelectorAll("[data-rmu]").forEach((b) =>
               b.addEventListener("click", () => removeUrl(b.dataset.rmu, b.dataset.uid)));
+            u2Root.querySelectorAll("[data-save-u]").forEach((b) =>
+              b.addEventListener("click", () => saveUrl(b.dataset.saveU, b.dataset.uid)));
             u2Root.querySelectorAll("[data-add-u]").forEach((b) =>
               b.addEventListener("click", () => addUrl(b.dataset.addU)));
           } catch (e) {
             toast(e.message, "error");
           }
         };
+        const showRow = (root, sel) => {
+          const row = root.querySelector(sel)?.closest(".u2k-edit-row, .u2k-file-edit");
+          if (row) row.classList.remove("hidden");
+        };
+        const hideRow = (root, sel) => {
+          const row = root.querySelector(sel)?.closest(".u2k-edit-row, .u2k-file-edit");
+          if (row) row.classList.add("hidden");
+        };
         const removeGroup = async (gid) => {
+          const ok = await confirmDialog({ title: "删除文件夹", message: "将同时移除其中的 URL（不影响已同步的 AstrBot 知识库），确认？" }).catch(() => false);
+          if (!ok) return;
           try {
             await bridge.apiPost("url2kb/groups", { action: "remove", id: gid });
-            toast("已删除分组", "success");
+            openFolds.delete(gid);
+            toast("已删除文件夹", "success");
             await renderU2k();
             await refresh();
           } catch (e) { toast(e.message, "error"); }
@@ -420,9 +479,9 @@ async function openPlatformConfig(id) {
           try {
             const name = u2Root.querySelector(`[data-gname="${gid}"]`)?.value?.trim();
             const note = u2Root.querySelector(`[data-gnote="${gid}"]`)?.value?.trim() || "";
-            if (!name) { toast("分组名称必填", "warn"); return; }
+            if (!name) { toast("文件夹名称必填", "warn"); return; }
             await bridge.apiPost("url2kb/groups", { action: "update", id: gid, name, note });
-            toast("已保存分组", "success");
+            toast("已保存文件夹", "success");
             await renderU2k();
             await refresh();
           } catch (e) { toast(e.message, "error"); }
@@ -430,7 +489,18 @@ async function openPlatformConfig(id) {
         const removeUrl = async (gid, uid) => {
           try {
             await bridge.apiPost("url2kb/urls", { action: "remove", group_id: gid, url_id: uid });
-            toast("已删除 URL", "success");
+            toast("已删除文件", "success");
+            await renderU2k();
+            await refresh();
+          } catch (e) { toast(e.message, "error"); }
+        };
+        const saveUrl = async (gid, uid) => {
+          try {
+            const title = u2Root.querySelector(`[data-utitle="${gid}"][data-uid="${uid}"]`)?.value?.trim() || "";
+            const url = u2Root.querySelector(`[data-uurl="${gid}"][data-uid="${uid}"]`)?.value?.trim();
+            if (!url) { toast("URL 必填", "warn"); return; }
+            await bridge.apiPost("url2kb/urls", { action: "update", group_id: gid, url_id: uid, title, url });
+            toast("已保存文件", "success");
             await renderU2k();
             await refresh();
           } catch (e) { toast(e.message, "error"); }
@@ -440,7 +510,7 @@ async function openPlatformConfig(id) {
           const btn = u2Root.querySelector(`[data-add-u="${gid}"]`);
           const url = inp?.value?.trim();
           if (!url) { toast("请输入网页地址", "warn"); return; }
-          const idleLabel = `${ICONS.plus}添加 URL`;
+          const idleLabel = `${ICONS.plus}添加文件`;
           if (btn) { btn.disabled = true; btn.textContent = "识别中…"; }
           try {
             const r = await bridge.apiPost("url2kb/urls", { action: "add", group_id: gid, url });
@@ -453,11 +523,12 @@ async function openPlatformConfig(id) {
         };
         const addGroup = async () => {
           const name = body.querySelector("#u2k-name")?.value?.trim();
-          if (!name) { toast("分组名称（知识库名）必填", "warn"); return; }
+          if (!name) { toast("文件夹名称（知识库名）必填", "warn"); return; }
           const note = body.querySelector("#u2k-note")?.value?.trim() || "";
           try {
-            await bridge.apiPost("url2kb/groups", { action: "add", name, note });
-            toast(`已添加分组：${name}`, "success");
+            const g = await bridge.apiPost("url2kb/groups", { action: "add", name, note });
+            openFolds.add(g.group?.id || "");
+            toast(`已新建文件夹：${name}`, "success");
             body.querySelector("#u2k-name").value = "";
             body.querySelector("#u2k-note").value = "";
             await renderU2k();
