@@ -147,6 +147,7 @@ class KBridge(Star):
         "memos_url": "str",
         "memos_token": "str",
         "memos_target_kb": "str",
+        "kb_emoji": "str",
         "max_concurrency": "int",
     }
 
@@ -280,6 +281,7 @@ class KBridge(Star):
                     "memos_token": bool(self.config.get("memos_token")),
                     "memos_target_kb": (self.config.get("memos_target_kb") or "").strip()
                     or "Memos",
+                    "kb_emoji": (self.config.get("kb_emoji") or "").strip() or "📥",
                 },
                 "common": {
                     "max_concurrency": int(self.config.get("max_concurrency", 3) or 3),

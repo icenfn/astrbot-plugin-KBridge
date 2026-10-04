@@ -69,5 +69,11 @@
     "type": "string",
     "default": "Memos",
     "secret": false
+  },
+  "kb_emoji": {
+    "description": "同步时自动创建 AstrBot 知识库所用的图标（emoji，默认 📥；可在插件 WebUI「平台配置」页面修改）",
+    "type": "string",
+    "default": "📥",
+    "secret": false
   }
 }

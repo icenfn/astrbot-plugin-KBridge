@@ -288,6 +288,15 @@ async function openPlatformConfig(id) {
         </div>
         <div class="u2k-groups"><div class="empty-state small">加载中…</div></div>
       </div>` : "";
+  // 通用：创建知识库所用的图标（所有平台共用），随平台配置一并保存
+  const kbBlock = `
+      <div class="pfield kb-common">
+        <label>知识库图标</label>
+        <small class="f-hint dim">同步时自动创建 AstrBot 知识库所用的图标（emoji），默认 📥</small>
+        <input class="input" data-key="kb_emoji" type="text" autocomplete="off"
+          value="${esc(platformConfig.values.kb_emoji || "")}"
+          placeholder="默认 📥" />
+      </div>`;
   await showFullPage({
     title: `${p.name} · 平台配置`,
     contentHtml: `
@@ -307,6 +316,7 @@ async function openPlatformConfig(id) {
       }).join("")}
       ${ghBlock}
       ${u2Block}
+      ${kbBlock}
       <button class="btn primary" id="pf-save">保存配置</button>`,
     onMount: (body, close) => {
       const ghList = body.querySelector(".gh-list");

@@ -131,6 +131,13 @@ class GitHubClient:
         parsed["branch"] = branch
         return branch
 
+    async def get_repo_description(self, parsed: dict[str, str]) -> str:
+        """获取仓库简介（description 字段），无则返回空串。"""
+        data = await self._api_get(
+            f"{GITHUB_API}/repos/{parsed['owner']}/{parsed['repo']}"
+        )
+        return (data.get("description") or "").strip()
+
     async def get_tree(self, parsed: dict[str, str]) -> list[dict[str, str]]:
         """获取分支完整文件树（recursive），返回 blob 列表 [{path, size}]。"""
         branch = await self.resolve_default_branch(parsed)

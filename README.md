@@ -31,7 +31,7 @@
 - **GitHub 仓库**：多仓库管理，支持**整个仓库**（默认分支）或 **tree 子目录**（如 `…/tree/master/packages/docs/src/pages/en`）
 - **格式白名单**：仅导入 AstrBot 可解析格式（`md/txt/markdown/rst/adoc/docx/xlsx/xls/pdf/epub`），自动忽略 `node_modules/dist/build` 等目录
 - **增量同步**：ima 按 `media_id`、有道云按笔记 id、GitHub 按文件相对路径、Open Notebook 按 source/note id、Memos 按 memo uid 去重，重复同步不产生重复文档
-- **自动建库 + 重排序**：目标知识库不存在时自动创建，并自动绑定已配置的 Embedding 与 Rerank（重排序）模型
+- **自动建库 + 重排序**：目标知识库不存在时自动创建，并自动绑定已配置的 Embedding 与 Rerank（重排序）模型；知识库图标（emoji）可在「平台配置」页面配置（`kb_emoji`，默认 📥），简介优先取来源描述（GitHub 仓库简介），否则回退平台名
 - **定时同步**：按间隔（天/时/分/秒）自动同步已开启「定时」的同步源，日志高亮分级展示（成功/警告/失败）
 - **平台开关**：每个平台可独立启用/禁用，禁用后同步列表自动标记、手动/定时/全部同步均跳过该平台
 - **url2kb**：网页一键转 Markdown 入库——多个分组（分组名即 AstrBot 知识库名，带备注）、多 URL（自动识别网页标题），同步/定时同步均支持
@@ -72,6 +72,7 @@
 | Memos | `memos_url` | 自建 Memos 实例地址（如 `https://memos.example.com`） |
 | Memos | `memos_token`（必填） | Memos 设置 → 我的账户 → 访问令牌 |
 | Memos | `memos_target_kb` | 同步至 AstrBot 知识库名称（默认 `Memos`） |
+| 通用 | `kb_emoji` | 同步时自动创建 AstrBot 知识库所用的图标（emoji，默认 `📥`；在「平台配置」页面配置） |
 
 ## WebUI 管理页面
 
@@ -98,7 +99,7 @@
 2. **跳过**：订阅库/共享笔记无权限（220030/210005/210011/210034）、无访问链接、AstrBot 不支持解析的格式（如 PPTX）
 3. **笔记读取**：ima 笔记（media_type=11）经官方 notes 接口 `get_doc_content` 读取纯文本入库（需笔记作者身份）
 4. **有道云**：官方 MCP（SSE + `X-API-Key` 认证）递归列出目录下笔记，`getNoteTextContent` 读取内容统一存为 Markdown，写入配置指定的目标知识库（默认 `YoudaoNote`）
-5. **GitHub**：`Git Trees API`（recursive）获取文件树 → 过滤 AstrBot 支持格式与忽略目录 → `raw.githubusercontent.com` 下载 → 按文件相对路径增量入库；目标知识库以仓库名自动创建
+5. **GitHub**：`Git Trees API`（recursive）获取文件树 → 过滤 AstrBot 支持格式与忽略目录 → `raw.githubusercontent.com` 下载 → 按文件相对路径增量入库；目标知识库以仓库名自动创建，描述取仓库简介（无则用平台名）
 
 ## 限制
 

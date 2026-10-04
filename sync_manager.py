@@ -51,6 +51,19 @@ YDAO_KEY_PREFIX = "yd:"
 ON_KEY_PREFIX = "on:"  # Open Notebook 增量索引前缀（source/note id）
 MEMOS_KEY_PREFIX = "ms:"  # Memos 增量索引前缀（memo uid）
 
+# 平台显示名（创建知识库时 description 回退使用）
+PLATFORM_DISPLAY_NAMES = {
+    "ima": "腾讯 ima",
+    "youdao": "有道云笔记",
+    "github": "Github",
+    "url2kb": "url2kb",
+    "opennotebook": "Open Notebook",
+    "memos": "Memos",
+}
+
+# 创建知识库默认图标（可在「平台配置」页面通过 kb_emoji 覆盖）
+DEFAULT_KB_EMOJI = "📥"
+
 _TAG_RE = re.compile(r"<[^>]+>")
 _SCRIPT_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _WS_RE = re.compile(r"[ \t\r\f\v]+")
@@ -653,9 +666,10 @@ class SyncManager:
         rerank_provider_id = await self._pick_rerank_provider_id()
         await kb_mgr.create_kb(
             name,
+            description=await self._kb_description(sub),
             embedding_provider_id=embedding_provider_id,
             rerank_provider_id=rerank_provider_id,
-            emoji="📥",
+            emoji=self._kb_emoji(),
         )
         kb = await kb_mgr.get_kb_by_name(name)
         if kb is None:
@@ -677,6 +691,23 @@ class SyncManager:
         if sub.platform == "github":
             return sub.target_kb or self._github_repo_name(sub.kb_id)
         return sub.target_kb or sub.kb_name
+
+    def _kb_emoji(self) -> str:
+        """创建知识库时使用的图标，可在「平台配置」页面通过 kb_emoji 配置。"""
+        return (str(self.config.get("kb_emoji") or "").strip()) or DEFAULT_KB_EMOJI
+
+    async def _kb_description(self, sub: Subscription) -> str:
+        """创建知识库时写入的描述：优先使用从来源获取到的描述，取不到则回退平台名称。"""
+        desc = ""
+        if sub.platform == "github":
+            try:
+                client = await self.get_client("github")
+                get_desc = getattr(client, "get_repo_description", None)
+                if get_desc is not None:
+                    desc = (await get_desc(sub_key_to_parsed(sub.kb_id)) or "").strip()
+            except Exception as e:  # noqa: BLE001
+                self.logger.debug(f"[KBridge] 获取 GitHub 仓库描述失败：{e}")
+        return desc or PLATFORM_DISPLAY_NAMES.get(sub.platform, "") or sub.platform
 
     async def delete_local(self, sub: Subscription) -> dict:
         """删除该同步源已同步到 AstrBot 的本地知识库数据（订阅与源保留）。

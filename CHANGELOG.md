@@ -2,6 +2,16 @@
 
 本项目的所有显著变更按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 记录，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。版本与 `metadata.yaml` 保持一致。
 
+## [1.3.0] - 2026-10-04
+
+### Added
+
+- **知识库图标可配置**：同步时自动创建 AstrBot 知识库所用的图标（emoji）改为可在插件 WebUI「平台配置」页面配置（配置项 `kb_emoji`，默认 📥），不再硬编码
+
+### Changed
+
+- **自动创建知识库的简介**：创建知识库时写入描述——优先使用从来源获取到的描述（GitHub 仓库读取仓库 `description`），取不到时回退为平台名称
+
 ## [1.2.0] - 2026-10-04
 
 ### Changed
