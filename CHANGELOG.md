@@ -2,7 +2,7 @@
 
 本项目的所有显著变更按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 记录，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。版本与 `metadata.yaml` 保持一致。
 
-## [Unreleased]
+## [1.2.0] - 2026-10-04
 
 ### Changed
 
