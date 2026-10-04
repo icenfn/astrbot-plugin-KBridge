@@ -600,9 +600,9 @@ svg { width: 18px; height: 18px; flex: none; }
   min-width: 0;
 }
 .sub-ops .switch { width: 100%; justify-content: center; }
-.sub-ops .btn { width: 100%; justify-content: center; padding: 8px 6px; }
+.sub-ops .btn { width: auto; justify-self: center; padding: 8px 12px; }
 .switch > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: none; }
-.sub-dellocal { width: 100%; }
+
 .empty-state {
   text-align: center;
   color: var(--dim);
