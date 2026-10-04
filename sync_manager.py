@@ -7,6 +7,7 @@
 """
 
 import asyncio
+import hashlib
 import html as html_lib
 import uuid
 import logging
@@ -96,6 +97,12 @@ class SyncResult:
     failed: int = 0
     errors: list[str] = field(default_factory=list)
     skip_counts: dict[str, int] = field(default_factory=dict)
+
+def _content_hash(payload) -> str:
+    """内容指纹（md5 前 16 位）。payload 支持 str/bytes。"""
+    raw = payload if isinstance(payload, bytes) else str(payload).encode("utf-8")
+    return hashlib.md5(raw).hexdigest()[:16]
+
 
 def _sanitize_filename(name: str) -> str:
     name = re.sub(r'[\\/:*?"<>|\r\n\t]', "_", name).strip(" .")
@@ -956,34 +963,28 @@ class SyncManager:
                 result.skipped += 1
                 return
             key = f"{YDAO_KEY_PREFIX}{file_id}"
-            if key in kb_index:
-                result.skipped += 1
-                return
+            entry = kb_index.get(key)
             title = str(note.get("name") or file_id)
             try:
+                # 覆盖语义：每次同步读取内容与指纹比对，源内容更新则删旧传新
                 data = await client.get_note_content(file_id)
                 content = str(data.get("content") or "").strip()
                 if not content:
-                    kb_index[key] = {"doc_id": "", "title": title, "skipped": "empty"}
+                    await self._maybe_delete_old(kb, entry)
+                    kb_index[key] = {
+                        "doc_id": "", "title": title, "skipped": "empty",
+                        "hash": _content_hash(content),
+                    }
                     result.skipped += 1
                     result.skip_counts["empty"] = result.skip_counts.get("empty", 0) + 1
                     return
                 # 去扩展名（name 形如 "xxx.note"），统一存 .md
                 stem = re.sub(r"\.[a-zA-Z0-9]+$", "", title).strip() or "untitled"
-                async with self._upload_semaphore():  # 全局串行入库，防 OOM
-                    if self.cancel_requested:
-                        raise _SyncCancelled()
-                    doc = await kb.upload_document(
-                        file_name=f"{_sanitize_filename(stem)}.md",
-                        file_content=content.encode("utf-8"),
-                        file_type="md",
-                    )
-                kb_index[key] = {
-                    "doc_id": doc.doc_id,
-                    "title": title,
-                    "at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                }
-                result.synced += 1
+                await self._upsert_doc(
+                    kb, kb_index, key, title,
+                    f"{_sanitize_filename(stem)}.md",
+                    content.encode("utf-8"), "md", result,
+                )
             except _SyncCancelled:
                 raise
             except YoudaoError as e:
@@ -1034,7 +1035,7 @@ class SyncManager:
             ext = relpath.rsplit(".", 1)[-1].lower() if "." in relpath else ""
             if ext not in SUPPORTED_EXT:
                 continue
-            files.append({"path": relpath, "size": b.get("size") or 0})
+            files.append({"path": relpath, "size": b.get("size") or 0, "sha": b.get("sha") or ""})
         if len(files) > MAX_ITEM_SAVE:
             files = files[:MAX_ITEM_SAVE]
         result.total = len(files)
@@ -1046,7 +1047,10 @@ class SyncManager:
             if self.cancel_requested:
                 raise _SyncCancelled()
             relpath = f["path"]
-            if relpath in kb_index:
+            sha = str(f.get("sha") or "")
+            entry = kb_index.get(relpath)
+            # 内容指纹（Git blob sha）一致即无需重新下载/入库
+            if sha and entry and entry.get("hash") == sha and entry.get("doc_id"):
                 result.skipped += 1
                 return
             try:
@@ -1057,25 +1061,19 @@ class SyncManager:
                 if self.cancel_requested:
                     raise _SyncCancelled()
                 if not data.strip():
-                    kb_index[relpath] = {"doc_id": "", "title": relpath, "skipped": "empty"}
+                    # 内容被清空：删除旧文档（若有），索引记为 empty
+                    await self._maybe_delete_old(kb, entry)
+                    kb_index[relpath] = {
+                        "doc_id": "", "title": relpath, "skipped": "empty", "hash": sha,
+                    }
                     result.skipped += 1
                     result.skip_counts["empty"] = result.skip_counts.get("empty", 0) + 1
                     return
                 file_name = f"{_sanitize_filename(relpath)}.{ext}"
-                async with self._upload_semaphore():  # 全局串行入库，防 OOM
-                    if self.cancel_requested:
-                        raise _SyncCancelled()
-                    doc = await kb.upload_document(
-                        file_name=file_name,
-                        file_content=data,
-                        file_type=ext,
-                    )
-                kb_index[relpath] = {
-                    "doc_id": doc.doc_id,
-                    "title": relpath,
-                    "at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                }
-                result.synced += 1
+                await self._upsert_doc(
+                    kb, kb_index, relpath, relpath, file_name, data, ext,
+                    result, content_hash=sha,
+                )
             except _SyncCancelled:
                 raise
             except GitHubError as e:
@@ -1121,21 +1119,19 @@ class SyncManager:
                 result.skipped += 1
                 return
             key = f"{ON_KEY_PREFIX}{sid}"
-            if key in kb_index:
-                result.skipped += 1
-                return
+            entry = kb_index.get(key)
             title = str(src.get("name") or src.get("title") or sid)[:120]
             content = str(src.get("content") or src.get("text") or "").strip()
             if not content:
+                await self._maybe_delete_old(kb, entry)
+                kb_index[key] = {
+                    "doc_id": "", "title": title, "skipped": "empty", "hash": _content_hash(content),
+                }
                 result.skipped += 1
-                kb_index[key] = {"doc_id": "", "title": title, "skipped": "empty"}
                 return
-            async with self._upload_semaphore():
-                doc = await kb.upload_document(
-                    file_name=f"{title}.md", file_content=content, file_type="md"
-                )
-            kb_index[key] = {"doc_id": doc.doc_id, "title": title}
-            result.synced += 1
+            await self._upsert_doc(
+                kb, kb_index, key, title, f"{title}.md", content, "md", result,
+            )
 
         async with self._semaphore():
             await asyncio.gather(*(process(src) for src in sources))
@@ -1170,21 +1166,19 @@ class SyncManager:
                 result.skipped += 1
                 return
             key = f"{MEMOS_KEY_PREFIX}{uid}"
-            if key in kb_index:
-                result.skipped += 1
-                return
+            entry = kb_index.get(key)
             content = str(m.get("content") or "").strip()
             if not content:
+                await self._maybe_delete_old(kb, entry)
+                kb_index[key] = {
+                    "doc_id": "", "title": uid, "skipped": "empty", "hash": _content_hash(content),
+                }
                 result.skipped += 1
-                kb_index[key] = {"doc_id": "", "title": uid, "skipped": "empty"}
                 return
             title = content.splitlines()[0][:40] or uid
-            async with self._upload_semaphore():
-                doc = await kb.upload_document(
-                    file_name=f"{title}.md", file_content=content, file_type="md"
-                )
-            kb_index[key] = {"doc_id": doc.doc_id, "title": title}
-            result.synced += 1
+            await self._upsert_doc(
+                kb, kb_index, key, title, f"{title}.md", content, "md", result,
+            )
 
         async with self._semaphore():
             await asyncio.gather(*(process(m) for m in memos))
@@ -1209,35 +1203,32 @@ class SyncManager:
                 raise _SyncCancelled()
             uid = str(u.get("id") or "")
             key = f"{URL2KB_PREFIX}{uid}"
-            if not uid or key in kb_index:
+            if not uid:
                 result.skipped += 1
                 continue
+            entry = kb_index.get(key)
             url = str(u.get("url") or "").strip()
             title = str(u.get("title") or "").strip() or url
             if not url:
                 result.skipped += 1
                 continue
             try:
+                # 覆盖语义：每次同步重新抓取并比对指纹，网页内容更新则删旧传新
                 text = await self._fetch_web_md(url)
                 if not text.strip():
-                    kb_index[key] = {"doc_id": "", "title": title, "skipped": "empty"}
+                    await self._maybe_delete_old(kb, entry)
+                    kb_index[key] = {
+                        "doc_id": "", "title": title, "skipped": "empty",
+                        "hash": _content_hash(text),
+                    }
                     result.skipped += 1
                     result.skip_counts["empty"] = result.skip_counts.get("empty", 0) + 1
                     continue
-                async with self._upload_semaphore():  # 全局串行入库，防 OOM
-                    if self.cancel_requested:
-                        raise _SyncCancelled()
-                    doc = await kb.upload_document(
-                        file_name=f"{_sanitize_filename(title)}.md",
-                        file_content=text.encode("utf-8"),
-                        file_type="md",
-                    )
-                kb_index[key] = {
-                    "doc_id": doc.doc_id,
-                    "title": title,
-                    "at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                }
-                result.synced += 1
+                await self._upsert_doc(
+                    kb, kb_index, key, title,
+                    f"{_sanitize_filename(title)}.md",
+                    text.encode("utf-8"), "md", result,
+                )
             except _SyncCancelled:
                 raise
             except Exception as e:  # noqa: BLE001
@@ -1280,6 +1271,54 @@ class SyncManager:
                 return results
             finally:
                 self._syncing = False
+
+    async def _maybe_delete_old(self, kb, entry: dict | None) -> None:
+        """删除旧文档（覆盖语义：内容变化时先删旧再传新）。知识库不存在/无删除接口时静默跳过。"""
+        old_doc = (entry or {}).get("doc_id") or ""
+        if not old_doc:
+            return
+        del_fn = getattr(kb, "delete_document", None)
+        if del_fn is None:
+            return
+        try:
+            await del_fn(old_doc)
+        except Exception:  # noqa: BLE001 旧文档可能已被删除/向量库不一致
+            pass
+
+    async def _upsert_doc(
+        self, kb, kb_index: dict, key: str, title: str,
+        file_name: str, payload, ext: str, result,
+        content_hash: str | None = None,
+    ) -> None:
+        """通用增量入库（支持新旧覆盖）：
+
+        - 新条目：上传并记索引（含内容指纹 hash）
+        - 已存在且 hash 相同：跳过（不重复入库）
+        - 已存在但 hash 不同（源内容已更新，或旧索引无 hash 的存量条目）：
+          删除旧文档后重新上传（覆盖），保证 AstrBot 知识库内容与源一致
+        upload 统一走全局串行锁（防 embedding 并发 OOM）。
+        """
+        if self.cancel_requested:
+            raise _SyncCancelled()
+        h = content_hash or _content_hash(payload)
+        entry = kb_index.get(key)
+        if entry and entry.get("hash") == h and entry.get("doc_id"):
+            result.skipped += 1
+            return
+        await self._maybe_delete_old(kb, entry)
+        async with self._upload_semaphore():
+            if self.cancel_requested:
+                raise _SyncCancelled()
+            doc = await kb.upload_document(
+                file_name=file_name, file_content=payload, file_type=ext
+            )
+        kb_index[key] = {
+            "doc_id": doc.doc_id,
+            "title": title,
+            "hash": h,
+            "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        result.synced += 1
 
     async def _process_ima_item(
         self, kb, kb_name: str, sub: Subscription, media_id: str, item: dict, kb_index: dict

@@ -139,7 +139,11 @@ class GitHubClient:
         )
         tree = data.get("tree") or []
         return [
-            {"path": t.get("path", ""), "size": t.get("size") or 0}
+            {
+                "path": t.get("path", ""),
+                "size": t.get("size") or 0,
+                "sha": t.get("sha") or "",  # blob 内容指纹：内容变化则 sha 变化，用于覆盖同步
+            }
             for t in tree
             if t.get("type") == "blob" and t.get("path")
         ]

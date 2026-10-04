@@ -2,6 +2,15 @@
 
 本项目的所有显著变更按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 记录，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。版本与 `metadata.yaml` 保持一致。
 
+## [Unreleased]
+
+### Added
+
+- **同步新旧覆盖**：源内容更新后再次同步自动覆盖 AstrBot 知识库旧文档（删旧传新）
+  - GitHub：以 Git blob sha 为内容指纹（零额外请求），仓库文件更新即覆盖
+  - 有道云 / url2kb / Open Notebook / Memos：重新获取内容与指纹比对，变化即覆盖
+  - ima 例外：受官方频控限制保持「存在即跳过」，如需更新请删除本地后重同步
+
 ## [1.1.2] - 2026-10-04
 
 ### Changed

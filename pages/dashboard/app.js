@@ -220,7 +220,7 @@ function renderPlatforms() {
           </div>
           <div class="platform-name">${p.name}</div>
           <span class="badge ${p.supported ? (set ? "ok" : "warn") : "soon"}">
-            ${!p.supported ? "即将支持" : (off || !set) && !noFields ? "已禁用" : noFields ? "已就绪" : "已配置"}
+            ${p.supported ? (noFields ? "已就绪" : (set ? "已配置" : "未配置")) : "即将支持"}
           </span>
           ${p.supported ? '<div class="open-hint">进入配置 ›</div>' : ""}
         </div>`;
