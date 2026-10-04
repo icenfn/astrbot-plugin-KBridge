@@ -111,8 +111,9 @@ function setSyncUI(syncing) {
   $("side-sync").classList.toggle("hidden", !syncing);
   const allBtn = document.querySelector("[data-action=sync-all]");
   if (allBtn) {
-    allBtn.disabled = syncing;
-    allBtn.innerHTML = syncing ? '<span class="spinner"></span>同步中…' : ICONS.sync + "同步全部";
+    // 多源并行：同步全部始终可用（未在同步的源会一并加入）
+    allBtn.disabled = false;
+    allBtn.innerHTML = ICONS.sync + "同步全部";
   }
 }
 
@@ -496,8 +497,8 @@ async function openPlatformConfig(id) {
 
 function subCard(s) {
   const off = platformConfig?.platforms?.[s.platform]?.enabled === false;
-  const cur = stats?.current;
-  const syncingThis = cur && cur.kb_id === s.kb_id;
+  const cur = (Array.isArray(stats?.current) ? stats.current : []).find((a) => a.kb_id === s.kb_id);
+  const syncingThis = !!cur;
   const otherSyncing = (stats?.is_syncing && !syncingThis) || false;
   const missing = !!s.kb_missing || s.last_status === "deleted";
   const statusText = syncingThis
@@ -667,7 +668,7 @@ function startPoll() {
       const view = $("view-subs");
       if (view._subs) renderSubs(); // 同步中实时刷新按钮/进度
       // 手动单源同步时 is_syncing 为 False，用 current 判断同步是否结束
-      if (!s.is_syncing && !s.current) {
+      if (!s.is_syncing && !(Array.isArray(s.current) && s.current.length)) {
         clearInterval(pollTimer);
         pollTimer = null;
         toast("同步完成");

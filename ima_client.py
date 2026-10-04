@@ -5,12 +5,13 @@
 """
 
 import asyncio
-import logging
 from typing import Any
+
+from astrbot.api import logger
 
 import aiohttp
 
-logger = logging.getLogger("astrbot")
+
 
 BASE_URL = "https://ima.qq.com"
 BASE_PATH = "/openapi/wiki/v1"

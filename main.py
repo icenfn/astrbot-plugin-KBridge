@@ -1,9 +1,9 @@
 """KBridge — AstrBot 插件：同步外部知识源到 AstrBot 知识库（WebUI 管理）。"""
 
 import asyncio
-import logging
 from functools import wraps
 
+from astrbot.api import logger
 from astrbot.api.all import (
     AstrBotConfig,
     Context,
@@ -17,7 +17,7 @@ from .github_client import GitHubError, display_name, parse_github_url, sub_key
 from .youdao_client import YoudaoError
 from .sync_manager import DEFAULT_GITHUB_MIRROR, SyncManager
 
-logger = logging.getLogger("astrbot")
+
 
 PLUGIN_NAME = "astrbot_plugin_kbridge"
 
@@ -670,9 +670,6 @@ class KBridge(Star):
     @webapi_handler
     async def api_sync(self):
         payload = await request.json(default={})
-        if self.manager.is_syncing:
-            return error_response("已有同步任务在运行", status_code=409)
-        self.manager._cancel = False  # 新同步开始前清除取消标记
         kb_id = str(payload.get("kb_id") or "").strip()
         platform = str(payload.get("platform") or "ima").strip() or "ima"
         if kb_id:
@@ -681,18 +678,25 @@ class KBridge(Star):
                 return error_response("同步源不存在", status_code=404)
             if not self.manager.platform_enabled().get(sub.platform, True):
                 return error_response(f"平台 {sub.platform} 已禁用，请先在「平台配置」中启用", status_code=400)
+            if sub.kb_id in getattr(self.manager, "_active", {}):
+                return json_response({"started": False, "message": "该同步源正在同步中"})
             asyncio.get_running_loop().create_task(self._bg_sync_sub(sub))
         else:
+            self.manager._cancel = False  # 同步全部前清除取消标记
             asyncio.get_running_loop().create_task(self._bg_sync(None))
         return json_response({"started": True})
 
     @webapi_handler
     async def api_cancel(self):
-        """取消当前进行中的同步（已入库部分保留）。"""
-        if not self.manager.is_syncing and self.manager.current_progress is None:
+        """取消同步（已入库部分保留）。kb_id 为空取消全部，否则只取消指定同步源。"""
+        payload = await request.json(default={})
+        kb_id = str(payload.get("kb_id") or "").strip()
+        if not self.manager.is_syncing:
             return json_response({"cancelled": False, "message": "当前没有进行中的同步"})
-        self.manager.request_cancel()
-        self.logger.info("[KBridge] 收到取消请求，正在终止同步")
+        if kb_id and kb_id not in {k for k in self.manager._active}:
+            return json_response({"cancelled": False, "message": "该同步源不在同步中"})
+        self.manager.request_cancel(kb_id or None)
+        self.logger.info(f"[KBridge] 收到取消请求: {'全部' if not kb_id else kb_id}")
         return json_response({"cancelled": True, "message": "正在取消…"})
 
     async def _bg_sync(self, index: int | None) -> None:

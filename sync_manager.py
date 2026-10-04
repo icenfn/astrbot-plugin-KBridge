@@ -10,13 +10,14 @@ import asyncio
 import hashlib
 import html as html_lib
 import uuid
-import logging
 import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 import aiohttp
+
+from astrbot.api import logger
 
 from .ima_client import IMAClient, IMAError, PERMISSION_CODES, _retry_with_backoff
 from .youdao_client import YoudaoClient, YoudaoError
@@ -29,7 +30,7 @@ from .github_client import (
     sub_key_to_parsed,
 )
 
-logger = logging.getLogger("astrbot")
+
 
 KV_SUBS = "kbridge_subs"
 KV_INDEX = "kbridge_index"
@@ -146,37 +147,39 @@ class SyncManager:
         self._index_cache: dict[str, dict[str, Any]] | None = None
         self._sem: asyncio.Semaphore | None = None
         self._upload_sem: asyncio.Semaphore | None = None  # 全局入库串行锁（防并发 embedding OOM）
-        self._sync_lock = asyncio.Lock()
-        self._syncing = False
         self._cancel = False
-        self._current: Subscription | None = None
-        self._current_result: SyncResult | None = None
+        self._cancel_kbs: set[str] = set()  # 按同步源取消（多源并行下互不影响）
+        self._active: dict[str, tuple[Subscription, Any]] = {}  # 进行中的同步源 kb_id -> (sub, result)
 
     @property
     def is_syncing(self) -> bool:
-        return self._syncing
+        return bool(self._active)
+
+    def _sub_cancelled(self, kb_id: str) -> bool:
+        """该同步源是否被请求取消（全局取消或单源取消）。"""
+        return self._cancel or kb_id in self._cancel_kbs
+
+    def request_cancel(self, kb_id: str | None = None) -> None:
+        """取消同步。kb_id 为空时取消全部进行中的同步源。"""
+        if kb_id is None:
+            self._cancel = True
+        else:
+            self._cancel_kbs.add(kb_id)
 
     @property
-    def cancel_requested(self) -> bool:
-        return self._cancel
-
-    def request_cancel(self) -> None:
-        self._cancel = True
-
-    @property
-    def current_progress(self) -> dict | None:
-        """当前同步源进度（供页面展示「同步中 x/y」），无同步时返回 None。"""
-        if self._current is None or self._current_result is None:
-            return None
-        r = self._current_result
-        return {
-            "kb_id": self._current.kb_id,
-            "name": self._current.kb_name,
-            "total": r.total,
-            "synced": r.synced,
-            "skipped": r.skipped,
-            "failed": r.failed,
-        }
+    def current_progress(self) -> list[dict]:
+        """所有进行中同步源的进度（多源并行），无同步时返回空列表。"""
+        return [
+            {
+                "kb_id": kb_id,
+                "name": sub.kb_name,
+                "total": r.total,
+                "synced": r.synced,
+                "skipped": r.skipped,
+                "failed": r.failed,
+            }
+            for kb_id, (sub, r) in self._active.items()
+        ]
 
     # ---------- 基础 ----------
 
@@ -763,8 +766,11 @@ class SyncManager:
     async def sync_subscription(self, sub: Subscription) -> SyncResult:
         result = SyncResult(kb_id=sub.kb_id)
         self._check_platform_enabled(sub.platform)  # 平台已禁用时直接拒绝同步
-        self._current = sub
-        self._current_result = result
+        if sub.kb_id in self._active:
+            # 同源防重入：已在同步时直接返回当前进度（不重复启动）
+            return self._active[sub.kb_id][1]
+        self._active[sub.kb_id] = (sub, result)
+        self._cancel_kbs.discard(sub.kb_id)
         self.logger.info(f"[KBridge] 开始同步: {sub.kb_name} ({sub.kb_id}) [{sub.platform}]")
         try:
             if sub.platform == "youdao":
@@ -823,9 +829,8 @@ class SyncManager:
             await self._flush_sub(sub)
             return result
         finally:
-            if self._current is sub:
-                self._current = None
-                self._current_result = None
+            self._active.pop(sub.kb_id, None)
+            self._cancel_kbs.discard(sub.kb_id)
 
     async def _sync_ima(self, sub: Subscription, result: SyncResult) -> None:
         """IMA 同步：递归遍历知识库（含文件夹）-> 逐个条目增量处理。"""
@@ -870,7 +875,7 @@ class SyncManager:
 
         async def process(item: dict[str, Any]) -> None:
             nonlocal perm_warned
-            if self.cancel_requested:
+            if self._sub_cancelled(sub.kb_id):
                 raise _SyncCancelled()
             media_id = str(item.get("media_id") or "")
             if not media_id or media_id in kb_index:
@@ -878,12 +883,12 @@ class SyncManager:
                 return
             try:
                 async with sem:
-                    if self.cancel_requested:
+                    if self._sub_cancelled(sub.kb_id):
                         raise _SyncCancelled()
                     status = await self._process_ima_item(
                         kb, kb_name, sub, media_id, item, kb_index
                     )
-                if self.cancel_requested:
+                if self._sub_cancelled(sub.kb_id):
                     raise _SyncCancelled()
                 if status == "ok":
                     result.synced += 1
@@ -956,7 +961,7 @@ class SyncManager:
 
         # 2. 逐个笔记读取并入库（MCP 会话单连接，串行调用）
         async def process(note: dict[str, Any]) -> None:
-            if self.cancel_requested:
+            if self._sub_cancelled(sub.kb_id):
                 raise _SyncCancelled()
             file_id = str(note.get("id") or "")
             if not file_id:
@@ -983,7 +988,7 @@ class SyncManager:
                 await self._upsert_doc(
                     kb, kb_index, key, title,
                     f"{_sanitize_filename(stem)}.md",
-                    content.encode("utf-8"), "md", result,
+                    content.encode("utf-8"), "md", result, sub.kb_id,
                 )
             except _SyncCancelled:
                 raise
@@ -1001,7 +1006,7 @@ class SyncManager:
                 result.errors.append(f"{title}: {e}")
 
         for note in notes:
-            if self.cancel_requested:
+            if self._sub_cancelled(sub.kb_id):
                 raise _SyncCancelled()
             await process(note)
         await self._save_index()
@@ -1044,7 +1049,7 @@ class SyncManager:
         sem = self._semaphore()
 
         async def process(f: dict[str, str]) -> None:
-            if self.cancel_requested:
+            if self._sub_cancelled(sub.kb_id):
                 raise _SyncCancelled()
             relpath = f["path"]
             sha = str(f.get("sha") or "")
@@ -1055,10 +1060,10 @@ class SyncManager:
                 return
             try:
                 async with sem:
-                    if self.cancel_requested:
+                    if self._sub_cancelled(sub.kb_id):
                         raise _SyncCancelled()
                     data, ext = await client.fetch_raw(parsed, relpath)
-                if self.cancel_requested:
+                if self._sub_cancelled(sub.kb_id):
                     raise _SyncCancelled()
                 if not data.strip():
                     # 内容被清空：删除旧文档（若有），索引记为 empty
@@ -1072,7 +1077,7 @@ class SyncManager:
                 file_name = f"{_sanitize_filename(relpath)}.{ext}"
                 await self._upsert_doc(
                     kb, kb_index, relpath, relpath, file_name, data, ext,
-                    result, content_hash=sha,
+                    result, sub.kb_id, content_hash=sha,
                 )
             except _SyncCancelled:
                 raise
@@ -1089,7 +1094,7 @@ class SyncManager:
         # 分块并发（每批 GH_BATCH），避免一次性挂起上千个 task 挤占内存
         GH_BATCH = 60
         for i in range(0, len(files), GH_BATCH):
-            if self.cancel_requested:
+            if self._sub_cancelled(sub.kb_id):
                 raise _SyncCancelled()
             batch = files[i : i + GH_BATCH]
             ret = await asyncio.gather(*(process(f) for f in batch), return_exceptions=True)
@@ -1112,7 +1117,7 @@ class SyncManager:
         result.total = len(sources)
 
         async def process(src: dict[str, Any]) -> None:
-            if self.cancel_requested:
+            if self._sub_cancelled(sub.kb_id):
                 raise _SyncCancelled()
             sid = str(src.get("id") or "")
             if not sid:
@@ -1130,7 +1135,7 @@ class SyncManager:
                 result.skipped += 1
                 return
             await self._upsert_doc(
-                kb, kb_index, key, title, f"{title}.md", content, "md", result,
+                kb, kb_index, key, title, f"{title}.md", content, "md", result, sub.kb_id,
             )
 
         async with self._semaphore():
@@ -1159,7 +1164,7 @@ class SyncManager:
         result.total = len(memos)
 
         async def process(m: dict[str, Any]) -> None:
-            if self.cancel_requested:
+            if self._sub_cancelled(sub.kb_id):
                 raise _SyncCancelled()
             uid = str(m.get("uid") or m.get("id") or "")
             if not uid:
@@ -1177,7 +1182,7 @@ class SyncManager:
                 return
             title = content.splitlines()[0][:40] or uid
             await self._upsert_doc(
-                kb, kb_index, key, title, f"{title}.md", content, "md", result,
+                kb, kb_index, key, title, f"{title}.md", content, "md", result, sub.kb_id,
             )
 
         async with self._semaphore():
@@ -1199,7 +1204,7 @@ class SyncManager:
         result.total = len(urls)
 
         for u in urls:
-            if self.cancel_requested:
+            if self._sub_cancelled(sub.kb_id):
                 raise _SyncCancelled()
             uid = str(u.get("id") or "")
             key = f"{URL2KB_PREFIX}{uid}"
@@ -1227,7 +1232,7 @@ class SyncManager:
                 await self._upsert_doc(
                     kb, kb_index, key, title,
                     f"{_sanitize_filename(title)}.md",
-                    text.encode("utf-8"), "md", result,
+                    text.encode("utf-8"), "md", result, sub.kb_id,
                 )
             except _SyncCancelled:
                 raise
@@ -1250,27 +1255,23 @@ class SyncManager:
                 return _html_to_markdown(raw.decode("utf-8", errors="ignore"))
 
     async def sync_all(self) -> list[SyncResult]:
-        """同步全部同步源（防重入：已有同步在跑时直接返回空结果）。"""
-        if self._syncing:
-            return []
-        async with self._sync_lock:
-            self._syncing = True
-            self._cancel = False
-            try:
-                results: list[SyncResult] = []
-                for sub in await self.get_subs():
-                    if not sub.enabled or self.cancel_requested:
-                        continue
-                    try:
-                        results.append(await self.sync_subscription(sub))
-                    except Exception as e:  # noqa: BLE001
-                        r = SyncResult(kb_id=sub.kb_id)
-                        r.failed = 1
-                        r.errors.append(str(e))
-                        results.append(r)
-                return results
-            finally:
-                self._syncing = False
+        """并行同步全部开启的同步源（多源同时同步；同源已在同步时自动去重）。
+
+        下载/处理并发各自受限（_semaphore），入库统一走全局串行锁（_upload_semaphore），
+        避免多源并行导致 embedding 并发 OOM。
+        """
+        subs = [s for s in await self.get_subs() if s.enabled]
+        self._cancel = False
+        results = await asyncio.gather(
+            *(self.sync_subscription(sub) for sub in subs), return_exceptions=True
+        )
+        out: list[SyncResult] = []
+        for r in results:
+            if isinstance(r, BaseException):
+                out.append(SyncResult(kb_id="", failed=1, errors=[str(r)]))
+            else:
+                out.append(r)
+        return out
 
     async def _maybe_delete_old(self, kb, entry: dict | None) -> None:
         """删除旧文档（覆盖语义：内容变化时先删旧再传新）。知识库不存在/无删除接口时静默跳过。"""
@@ -1287,7 +1288,7 @@ class SyncManager:
 
     async def _upsert_doc(
         self, kb, kb_index: dict, key: str, title: str,
-        file_name: str, payload, ext: str, result,
+        file_name: str, payload, ext: str, result, kb_id: str,
         content_hash: str | None = None,
     ) -> None:
         """通用增量入库（支持新旧覆盖）：
@@ -1298,7 +1299,7 @@ class SyncManager:
           删除旧文档后重新上传（覆盖），保证 AstrBot 知识库内容与源一致
         upload 统一走全局串行锁（防 embedding 并发 OOM）。
         """
-        if self.cancel_requested:
+        if self._sub_cancelled(kb_id):
             raise _SyncCancelled()
         h = content_hash or _content_hash(payload)
         entry = kb_index.get(key)
@@ -1307,7 +1308,7 @@ class SyncManager:
             return
         await self._maybe_delete_old(kb, entry)
         async with self._upload_semaphore():
-            if self.cancel_requested:
+            if self._sub_cancelled(kb_id):
                 raise _SyncCancelled()
             doc = await kb.upload_document(
                 file_name=file_name, file_content=payload, file_type=ext
@@ -1350,7 +1351,7 @@ class SyncManager:
                 return "empty"
             file_name = f"{_sanitize_filename(title)}.md"
             async with self._upload_semaphore():  # 全局串行入库，防 OOM
-                if self.cancel_requested:
+                if self._sub_cancelled(sub.kb_id):
                     raise _SyncCancelled()
                 doc = await kb.upload_document(
                     file_name=file_name,
@@ -1393,7 +1394,7 @@ class SyncManager:
             payload = content
 
         async with self._upload_semaphore():  # 全局串行入库，防 OOM
-            if self.cancel_requested:
+            if self._sub_cancelled(sub.kb_id):
                 raise _SyncCancelled()
             doc = await kb.upload_document(
                 file_name=file_name,

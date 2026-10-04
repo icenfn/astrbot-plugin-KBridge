@@ -10,11 +10,12 @@ JSON-RPC，响应经 SSE 流回推。实现基于标准库 http.client（线程�
 import asyncio
 import http.client
 import json
-import logging
 import threading
 import time
 
-logger = logging.getLogger("astrbot")
+from astrbot.api import logger
+
+
 
 MCP_HOST = "open.mail.163.com"
 MCP_SSE_PATH = "/api/ynote/mcp/sse"

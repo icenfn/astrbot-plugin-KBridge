@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **日志记录器统一从 `astrbot.api` 导入**（`from astrbot.api import logger`），移除 Python 内置 logging（main / sync_manager / ima_client / youdao_client）
+- **支持多同步源同时同步**：移除全局互斥，改为按同步源跟踪（`_active`）
+  - 单源同步/同步全部/定时同步互不阻塞，多个源可并行入库（入库仍走全局串行锁防 OOM）
+  - 同源防重入：已在同步的源重复触发直接返回当前进度，不重复执行
+  - 取消按源隔离：取消某个同步源不影响其他进行中的源；「同步全部」按钮保持可用
+  - 页面进度改为同步源列表（`current` 数组），各卡片独立显示「同步中 x/y」
+
 ### Added
 
 - **同步新旧覆盖**：源内容更新后再次同步自动覆盖 AstrBot 知识库旧文档（删旧传新）
