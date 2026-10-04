@@ -2,6 +2,12 @@
 
 本项目的所有显著变更按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 记录，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。版本与 `metadata.yaml` 保持一致。
 
+## [1.3.1] - 2026-10-04
+
+### Fixed
+
+- **同步列表「删除本地」无效**：`KBManager.delete_kb` 需要 `kb_id`（UUID），此前误传知识库名导致查不到实例、知识库未被真正删除（却提示删除成功）。现从实例解析真实 `kb_id` 再删除，并校验返回值，失败时明确报错
+
 ## [1.3.0] - 2026-10-04
 
 ### Added

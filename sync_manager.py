@@ -723,8 +723,16 @@ class SyncManager:
             del_kb = getattr(kb_mgr, "delete_kb", None)
             if del_kb is None:
                 raise ValueError("当前 AstrBot 版本不支持删除知识库（KBManager.delete_kb）")
-            await del_kb(name)
-            deleted = True
+            # delete_kb 需要 kb_id（UUID），传入知识库名会查不到实例导致静默失败
+            kb_id = getattr(getattr(kb, "kb", None), "kb_id", None) or getattr(
+                kb, "kb_id", None
+            )
+            if not kb_id:
+                raise ValueError(f"无法解析知识库「{name}」的 id，删除失败")
+            ok = await del_kb(kb_id)
+            deleted = ok if isinstance(ok, bool) else True
+            if not deleted:
+                raise ValueError(f"删除知识库「{name}」失败")
         index = await self._get_index()
         if sub.kb_id in index:
             del index[sub.kb_id]
