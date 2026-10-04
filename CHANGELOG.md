@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **平台开关**：未配置的平台不再勾选「已启用」（视为未启用）；禁用状态下 badge 显示「已禁用」而非「未配置」
+- **Open Notebook / Memos 无法禁用**：平台开关保存白名单漏了这两个平台，已补齐
+
 ### Changed
 
 - **日志记录器统一从 `astrbot.api` 导入**（`from astrbot.api import logger`），移除 Python 内置 logging（main / sync_manager / ima_client / youdao_client）

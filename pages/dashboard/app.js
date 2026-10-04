@@ -210,18 +210,20 @@ function renderPlatforms() {
           ? (noFields || (p.fields || []).every((f) => platformConfig.values[f.key]))
           : false;
         const off = p.enabled === false;
+        // 未配置（有必填字段未填）时视为未启用：开关不勾选、状态显示未启用
+        const swOn = !off && (set || noFields);
         return `
         <div class="platform-card ${p.supported ? "" : "soon"} ${off ? "off" : ""}" data-platform="${id}">
           <div class="platform-head">
             <div class="platform-ic ${set ? "good" : ""}">${ICONS.link}</div>
             <label class="p-toggle" title="启用/禁用平台">
-              <input type="checkbox" data-pen="${id}" ${off ? "" : "checked"} ${p.supported ? "" : "disabled"} />
-              <span>${off ? "已禁用" : "已启用"}</span>
+              <input type="checkbox" data-pen="${id}" ${swOn ? "checked" : ""} ${p.supported ? "" : "disabled"} />
+              <span>${off ? "已禁用" : (swOn ? "已启用" : "未启用")}</span>
             </label>
           </div>
           <div class="platform-name">${p.name}</div>
-          <span class="badge ${p.supported ? (set ? "ok" : "warn") : "soon"}">
-            ${p.supported ? (noFields ? "已就绪" : (set ? "已配置" : "未配置")) : "即将支持"}
+          <span class="badge ${p.supported ? (off ? "err" : (set ? "ok" : "warn")) : "soon"}">
+            ${p.supported ? (off ? "已禁用" : (noFields ? "已就绪" : (set ? "已配置" : "未配置"))) : "即将支持"}
           </span>
           ${p.supported ? '<div class="open-hint">进入配置 ›</div>' : ""}
         </div>`;

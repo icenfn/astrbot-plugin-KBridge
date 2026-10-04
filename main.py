@@ -313,7 +313,7 @@ class KBridge(Star):
         if isinstance(pe, dict):
             cur = self.manager.platform_enabled()
             for p, v in pe.items():
-                if p in ("ima", "youdao", "github", "url2kb"):
+                if p in ("ima", "youdao", "github", "url2kb", "opennotebook", "memos"):
                     cur[p] = bool(v)
             self.config["platform_enabled"] = cur
             saved.append("platform_enabled")
